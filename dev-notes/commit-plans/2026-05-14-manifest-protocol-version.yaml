@@ -1,0 +1,27 @@
+repo: .
+
+commits:
+  - message: |
+      feat(pi): manifest protocolVersion + shim handshake (P2)
+
+      Python emits ``MANIFEST_PROTOCOL_VERSION = 1`` in the manifest
+      response. The TypeScript shim now enforces equality on the
+      handshake and throws on mismatch — failing extension load loudly
+      is better than silent runtime confusion when the two sides drift.
+
+      Inspired by v3's design (the one v5 dropped during synthesis). Bump
+      ``MANIFEST_PROTOCOL_VERSION`` on any backwards-incompatible change
+      to manifest schema or bridge frame shapes (manifest / execute /
+      update / response).
+
+      Tests updated:
+        - test_tools.py asserts the version constant
+        - test_server.py asserts data.protocolVersion == 1
+      Live tests still pass against sandboxed pi.
+    files:
+      - src/libharness/pi/tools.py
+      - src/libharness/pi/shim.py
+      - tests/pi/test_tools.py
+      - tests/pi/test_server.py
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-14-manifest-protocol-version.yaml

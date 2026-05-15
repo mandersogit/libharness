@@ -28,6 +28,7 @@ async def test_server_manifest_execute_and_updates() -> None:
         await writer.drain()
         manifest = await read_frame(reader)
         assert manifest["success"] is True
+        assert manifest["data"]["protocolVersion"] == 1
         assert manifest["data"]["tools"][0]["name"] == "echo"
         writer.close()
         await writer.wait_closed()

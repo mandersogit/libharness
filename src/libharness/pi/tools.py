@@ -17,6 +17,14 @@ from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_\-.]{0,127}$")
 _EMPTY_OBJECT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
 
+#: Wire-protocol version for the Python↔TypeScript tool bridge manifest.
+#:
+#: Bump on any backwards-incompatible change to the manifest schema or the
+#: ``manifest`` / ``execute`` / ``update`` / ``response`` frame shapes. The
+#: TS shim asserts equality during handshake; mismatches fail extension load
+#: rather than producing confused runtime errors later.
+MANIFEST_PROTOCOL_VERSION: int = 1
+
 
 class ToolError(RuntimeError):
     """Raised for invalid tool registration or execution."""
@@ -201,7 +209,10 @@ class ToolRegistry:
         return iter(self._tools.values())
 
     def manifest(self) -> dict[str, Any]:
-        return {"tools": [registered.spec.to_manifest() for registered in self._tools.values()]}
+        return {
+            "protocolVersion": MANIFEST_PROTOCOL_VERSION,
+            "tools": [registered.spec.to_manifest() for registered in self._tools.values()],
+        }
 
 
 def normalize_tool_value(value: Any) -> ToolResult:

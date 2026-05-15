@@ -182,8 +182,16 @@ async function bridgeCall<T = any>(
   });
 }
 
+const SUPPORTED_PROTOCOL_VERSION = 1;
+
 export default async function pythonToolsExtension(pi: ExtensionAPI) {
-  const manifest = await bridgeCall<{ tools: PythonToolSpec[] }>("manifest");
+  const manifest = await bridgeCall<{ protocolVersion?: number; tools: PythonToolSpec[] }>("manifest");
+  if (manifest.protocolVersion !== SUPPORTED_PROTOCOL_VERSION) {
+    throw new Error(
+      `Python tool bridge protocol mismatch: shim supports ${SUPPORTED_PROTOCOL_VERSION}, ` +
+        `Python sent ${String(manifest.protocolVersion)}`,
+    );
+  }
   const tools = manifest.tools ?? [];
 
   for (const spec of tools) {
