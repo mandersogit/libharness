@@ -7,78 +7,49 @@ created: "2026-05-14"
 
 ## Current state
 
-- Scaffold committed (`chore: initial scaffold`).
-- v5 baseline ported into `src/libharness/pi/` (subpackage chosen so
-  future non-pi harnesses get their own siblings; generalization is
-  deferred).
-- All 8 tests pass: 6 unit + 2 live (faux-provider integration test +
-  real-LLM end-to-end via ChatGPT OAuth → gpt-5.5).
+- 7 commits on `main`. v5 baseline ported into `src/libharness/pi/`,
+  `set_model` bug fixed with regression test, manifest
+  `protocolVersion=1` handshake added, `docs/DESIGN.md` written.
+- All 10 tests pass: 7 unit + 2 live (faux-provider integration + real
+  LLM via ChatGPT OAuth → gpt-5.5) + 1 set_model regression.
 - `make all` clean: ruff, mypy strict, pyright basic, pytest (excluding
   live by default).
-- `make test-live` runs both live tests against sandboxed pi.
+- `make test-live` runs the live tests against sandboxed pi.
 - OAuth credential copied from sibling sandbox at
-  `~/Downloads/pi_python_harness/.sandbox/pi-home/.pi/agent/auth.json`
-  into this repo's sandbox. Untracked (lives under `.sandbox/`).
-
-## Port-pass changes vs v5 verbatim
-
-The port is semantically verbatim. The deltas that were needed to keep
-mypy strict + ruff happy:
-
-- `pi/server.py:55` — `asyncio.AbstractServer | None` →
-  `asyncio.Server | None` (concrete type has `.sockets`).
-- `pi/server.py:87` — added `object` type annotations on `__aexit__`
-  params to satisfy `disallow_untyped_defs`.
-- `pi/tools.py:222` — gated `dataclasses.asdict()` behind
-  `not isinstance(value, type)` to narrow `is_dataclass`; kept a
-  one-line `# type: ignore[arg-type]` because mypy's TypeGuard widens
-  to instance-or-type.
-- `pi/tools.py:351` — removed unused `# type: ignore[comparison-overlap]`.
-- `pi/rpc.py:131-134` — `try/except ValueError: pass` →
-  `contextlib.suppress(ValueError)` (SIM105). Added `import contextlib`.
-- Ruff autofix on the rest (12 fixes — quoted self-types, sorted
-  imports, unused `AsyncIterator` import).
-
-No semantic changes. No bug fixes were applied during the port; the
-`set_model` bug from the v5 review is intentionally still there
-(next commit).
+  `~/Downloads/pi_python_harness/.sandbox/pi-home/.pi/agent/auth.json`.
+  Untracked (lives under `.sandbox/`). To set up from scratch:
+  `make login`.
 
 ## Pending tasks
 
-In priority order. P1 first.
-
-- **P2: Add manifest `protocolVersion`** (from v3's design). TS shim
-  enforces handshake; Python emits version 1.
-- **P3: Write `docs/DESIGN.md` properly.** Base on v3's design doc plus
-  v5's current implementation. Include roadmap section for the event /
-  command / state / UI bridges.
-- **P3 (CO-DESIGN REQUIRED): Event bridge.** First customization surface
-  beyond tools. Decide protocol shape (in-extension `pi.on(...)`
-  forwarding to Python over the same JSONL bridge?).
+- **CO-DESIGN: Event bridge.** Proposal lives at
+  `dev-notes/2026-05-14-event-bridge-proposal.md`. First customization
+  surface beyond tool execution. Three approaches sketched; decisions
+  deferred to discussion. Halt here until the author signs off on the
+  shape.
+- Command bridge, state bridge, UI bridge (after event bridge lands;
+  see `docs/DESIGN.md` Roadmap).
 
 ## Recent activity
 
 - Scaffold committed (`864a60b`).
-- v5 source ported into `libharness.pi` subpackage; tests ported into
-  `tests/pi/`. Mechanical changes only (module rename in tests +
-  minimal lint/type fixes — see above).
-- pi sandbox bootstrapped in this repo (`.sandbox/`).
-- OAuth credential copied from the sibling
-  `~/Downloads/pi_python_harness/` sandbox. (To set up from scratch,
-  `make login` instead.)
-- `tests/pi/test_real_llm.py` added — gates on PI_CLI AND on the
-  presence of `~/.pi/agent/auth.json` (~100B threshold to skip the
-  empty-`{}` stub case). Asserts that the model emits a tool call with
-  the requested args, not specific model wording.
+- v5 source ported into `libharness.pi` subpackage (`7d0d125`).
+- Real-LLM live test added (`ff498a2`).
+- `set_model` wire-shape bug fixed; regression test added (`0058390`).
+- Manifest `protocolVersion=1` + shim handshake (`b4d2ccd`).
+- `docs/DESIGN.md` written. Tool execution surface fully documented;
+  roadmap calls out event/command/state/UI bridges.
 
 ## Notes for the next session
 
-- Start with the `set_model` fix. One commit: the fix +
-  `tests/pi/test_set_model_regression.py`. Should be a 10-line change.
-- After that, the protocolVersion work touches both the Python manifest
-  emitter (`pi/tools.py:ToolRegistry.manifest`) and the TS shim
-  (`pi/shim.py:PRODUCTION_TS_SHIM`). One commit.
+- The event-bridge proposal is the next gate. Do not implement until
+  the author signs off on §"Decision points" of the proposal doc.
 - The model selection in `test_real_llm.py` is implicit (pi reads the
-  default from `settings.json` in the sandboxed home). If we want
+  default from `.sandbox/pi-home/.pi/agent/settings.json`). If we want
   determinism across contributor environments, pin via
   `PiLaunchConfig(provider=..., model=...)`.
+- One v3 idea we did *not* port: handlers that are sync generators
+  yielding multiple `update` frames are supported in `tools.py:
+  collect_tool_result`, but there's no test that exercises a generator
+  end-to-end through the bridge. Worth a regression test before we
+  rely on it.

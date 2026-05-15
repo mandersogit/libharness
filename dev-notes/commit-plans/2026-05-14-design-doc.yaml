@@ -1,0 +1,29 @@
+repo: .
+
+commits:
+  - message: |
+      docs(pi): write DESIGN.md (P3)
+
+      Replaces the one-line placeholder in docs/DESIGN.md with a real
+      design doc covering the libharness.pi subpackage:
+
+        - Goals / non-goals
+        - Architecture: Python parent + pi RPC + TS shim + bridge
+        - Process lifecycle (env vars, deterministic launch flags, HOME
+          sandboxing)
+        - Bridge protocol with the new protocolVersion handshake
+        - Python API: ToolRegistry, ToolContext, PiRpcClient,
+          PiPythonHarness
+        - TypeScript shim responsibilities
+        - Failure modes table
+        - Roadmap: event / command / state / UI bridges (not built)
+
+      Inspired by v3's design doc (which v5 dropped during synthesis)
+      plus what libharness.pi actually ships today.
+
+      Also updates SESSION-STATE.md to reflect P2 done and points the
+      next session at the event-bridge co-design.
+    files:
+      - docs/DESIGN.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-14-design-doc.yaml
