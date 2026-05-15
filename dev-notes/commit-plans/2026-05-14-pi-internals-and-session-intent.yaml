@@ -1,0 +1,44 @@
+repo: .
+
+commits:
+  - message: |
+      docs: pi internals notes + record session-model intent
+
+      Captures what we learned in a co-design session about pi internals
+      so future sessions don't re-derive these facts.
+
+      New reference doc: dev-notes/2026-05-14-pi-internals-notes.md
+        - Bridge transport: why we kept loopback TCP + token over UDS,
+          with the trade-offs table.
+        - Multi-pi concurrency under shared HOME: corrects an earlier
+          wrong claim — pi explicitly uses proper-lockfile on
+          settings.json and auth.json, sessions get unique per-session
+          files, so the multi-pi case is engineered for.
+        - Session structure: schematically a tree (parentId), in
+          practice a degenerate linear chain per file with cross-file
+          branching via parentSession headers. Entry ids are unique
+          per file, not global — future-gotcha if anyone builds a
+          sidecar.
+
+      Two resolved decisions added to docs/DESIGN.md (new "Resolved
+      decisions" section):
+        - Bridge transport: TCP + bearer token, not UDS.
+        - Sessions: use pi-native, no Python-side session model.
+
+      New "Sessions" subsection under Python API documents how
+      persistence is configured via PiLaunchConfig and which session
+      methods are currently typed on PiRpcClient vs. reachable only
+      via client.send(...).
+
+      SESSION-STATE updated:
+        - new pending task: expose pi-native session API as typed
+          methods on PiRpcClient (the planned ~150-line follow-up).
+        - new recent-activity entry pointing at the dev-note and
+          resolved decisions.
+
+      No code changes.
+    files:
+      - dev-notes/2026-05-14-pi-internals-notes.md
+      - docs/DESIGN.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-14-pi-internals-and-session-intent.yaml

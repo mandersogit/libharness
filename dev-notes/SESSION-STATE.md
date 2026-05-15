@@ -27,13 +27,9 @@ created: '2026-05-14'
 
 ## Pending tasks
 
-- **CO-DESIGN: Event bridge.** Proposal lives at
-  `dev-notes/2026-05-14-event-bridge-proposal.md`. First customization
-  surface beyond tool execution. Three approaches sketched; decisions
-  deferred to discussion. Halt here until the author signs off on the
-  shape.
-- Command bridge, state bridge, UI bridge (after event bridge lands;
-  see `docs/DESIGN.md` Roadmap).
+- **CO-DESIGN: Event bridge.** Proposal lives at `dev-notes/2026-05-14-event-bridge-proposal.md`. First customization surface beyond tool execution. Three approaches sketched; decisions deferred to discussion. Halt here until the author signs off on the shape.
+- **Expose pi-native session API as typed methods on `PiRpcClient`.** Decision recorded in `docs/DESIGN.md` § Resolved decisions: we use pi-native sessions, not a Python-side model. Methods to add as thin wrappers around `client.send({"type": "..."})`: `fork(entry_id)`, `clone()`, `switch_session(session_path)`, `get_session_stats()`, `export_html(output_path=...)`, `set_session_name(name)`, `get_fork_messages()`. Plus a `list_sessions(cwd, session_dir=...)` helper that reads the session directory. Cost is ~100-150 lines + tests.
+- Command bridge, state bridge, UI bridge (after event bridge lands; see `docs/DESIGN.md` Roadmap).
 
 ## Recent activity
 
@@ -50,6 +46,7 @@ created: '2026-05-14'
   table rule). All existing markdown reformatted; wide tables in the
   version-review, event-bridge proposal, and DESIGN.md restructured
   to use the sidecar pattern.
+- Pi internals investigated: bridge transport choice (TCP-not-UDS), multi-pi `HOME`-sharing safety (pi uses `proper-lockfile` on shared mutable files), and session-tree structure (cross-file, parentId-based, typically degenerate linear chains within a file). Findings recorded in `dev-notes/2026-05-14-pi-internals-notes.md`. Two resolved decisions added to `docs/DESIGN.md` § Resolved decisions.
 
 ## Notes for the next session
 

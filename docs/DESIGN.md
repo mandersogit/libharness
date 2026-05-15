@@ -6,22 +6,16 @@ exist) get their own sibling subpackage and their own design doc.
 ## Goals
 
 - Author tools, environment customization, and orchestration in Python.
-- Pi remains the agent runtime — model/provider selection, session
-  state, prompt expansion, tool registry, validation, event stream,
-  execution loop, compaction, retry, OAuth.
-- The TypeScript surface is one generic adapter that is generated /
-  vendored once, contains no per-tool logic, and is versioned via a
-  manifest handshake.
-- Deterministic tests at three layers: pure unit, fake-pi subprocess,
-  real-pi with a faux provider — plus an opt-in real-LLM smoke test.
+- Pi remains the agent runtime — model/provider selection, session state, prompt expansion, tool registry, validation, event stream, execution loop, compaction, retry, OAuth.
+- The TypeScript surface is one generic adapter that is generated / vendored once, contains no per-tool logic, and is versioned via a manifest handshake.
+- Deterministic tests at three layers: pure unit, fake-pi subprocess, real-pi with a faux provider — plus an opt-in real-LLM smoke test.
 
 ## Non-goals
 
 - Reimplementing pi or any subset of it in Python.
 - Replacing pi's provider/model registry, session manager, or TUI.
 - Wrapping the pi TypeScript SDK as a sidecar — RPC is the boundary.
-- A production sandbox. The bridge token guards against accidental
-  local access; it is not isolation.
+- A production sandbox. The bridge token guards against accidental local access; it is not isolation.
 
 ## Architecture
 
@@ -41,20 +35,15 @@ Python application
 
 The two protocols are deliberately separate:
 
-1. **Pi RPC** between the Python parent and pi (JSONL on pi's
-   stdin/stdout). Owned by pi; we are a client.
-1. **Bridge** between the TS shim (running inside pi) and the Python
-   tool server (loopback TCP JSONL with a bearer token). Owned by us
-   on both sides.
+1. **Pi RPC** between the Python parent and pi (JSONL on pi's stdin/stdout). Owned by pi; we are a client.
+1. **Bridge** between the TS shim (running inside pi) and the Python tool server (loopback TCP JSONL with a bearer token). Owned by us on both sides.
 
-Keeping them separate means pi's RPC contract can evolve without
-touching the bridge and vice versa.
+Keeping them separate means pi's RPC contract can evolve without touching the bridge and vice versa.
 
 ## Process lifecycle
 
 1. Python builds a `ToolRegistry` and decorates Python functions.
-1. `PiPythonHarness.start()` launches `PythonToolServer` on
-   `127.0.0.1:<ephemeral>` with a random per-run bearer token.
+1. `PiPythonHarness.start()` launches `PythonToolServer` on `127.0.0.1:<ephemeral>` with a random per-run bearer token.
 1. The harness writes a generated TS shim into a temp dir.
 1. The harness launches pi with deterministic flags
    (`--mode rpc --offline --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files --extension <shim>.ts`)
@@ -64,21 +53,13 @@ touching the bridge and vice versa.
    - `PI_PY_DIAGNOSTIC_COMMANDS`
    - `HOME` is pinned at the sandbox path so pi's `~/.pi/` lands
      inside `.sandbox/pi-home/.pi/`.
-1. Pi loads the shim via `jiti`. The shim issues a `manifest` bridge
-   call, asserts `protocolVersion == 1`, and calls `pi.registerTool()`
-   for each tool.
+1. Pi loads the shim via `jiti`. The shim issues a `manifest` bridge call, asserts `protocolVersion == 1`, and calls `pi.registerTool()` for each tool.
 1. Python sends prompts and control commands via `PiRpcClient`.
-1. When the model emits a tool call, pi validates the args, calls the
-   shim's `execute()`, which forwards an `execute` bridge call to
-   Python. Python runs the tool, optionally streams `update` frames,
-   and returns a final `response` frame. The shim normalizes to
-   pi's `AgentToolResult`.
+1. When the model emits a tool call, pi validates the args, calls the shim's `execute()`, which forwards an `execute` bridge call to Python. Python runs the tool, optionally streams `update` frames, and returns a final `response` frame. The shim normalizes to pi's `AgentToolResult`.
 
 ## Bridge protocol
 
-LF-only JSONL on loopback TCP. One JSON object per connection request,
-streaming responses (zero or more `update` frames, then exactly one
-`response`).
+LF-only JSONL on loopback TCP. One JSON object per connection request, streaming responses (zero or more `update` frames, then exactly one `response`).
 
 ### Handshake
 
@@ -105,9 +86,7 @@ streaming responses (zero or more `update` frames, then exactly one
 }
 ```
 
-The shim throws if `protocolVersion` does not equal its compiled-in
-constant. Mismatches fail extension load loudly rather than producing
-confused runtime errors.
+The shim throws if `protocolVersion` does not equal its compiled-in constant. Mismatches fail extension load loudly rather than producing confused runtime errors.
 
 ### Execute
 
@@ -148,8 +127,7 @@ Error response:
 }
 ```
 
-The shim raises on `success: false`. Pi records a tool failure in its
-agent loop.
+The shim raises on `success: false`. Pi records a tool failure in its agent loop.
 
 ## Python API
 
@@ -168,18 +146,11 @@ async def echo(message: str, ctx: ToolContext) -> ToolResult:
     return ToolResult.text(f"echo: {message}")
 ```
 
-Schema inference covers `str / int / float / bool / list[T] / dict[K, V] / Optional[T] / Union[…] / Literal[...] / Enum / @dataclass`. Pass an
-explicit `parameters=` dict for anything outside that subset. Tool names
-are validated against a conservative regex; duplicates raise `ToolError`.
+Schema inference covers `str / int / float / bool / list[T] / dict[K, V] / Optional[T] / Union[…] / Literal[...] / Enum / @dataclass`. Pass an explicit `parameters=` dict for anything outside that subset. Tool names are validated against a conservative regex; duplicates raise `ToolError`.
 
-A parameter named `ctx` or annotated as `ToolContext` is treated as the
-execution context and excluded from the JSON Schema.
+A parameter named `ctx` or annotated as `ToolContext` is treated as the execution context and excluded from the JSON Schema.
 
-Tool handlers may be sync or async, may return `ToolResult` / `str` /
-`Mapping` / `@dataclass` / scalar (`normalize_tool_value` handles
-each), and may be sync- or async-generators yielding intermediate
-results — yielded values become `update` frames; the last value
-becomes the final response.
+Tool handlers may be sync or async, may return `ToolResult` / `str` / `Mapping` / `@dataclass` / scalar (`normalize_tool_value` handles each), and may be sync- or async-generators yielding intermediate results — yielded values become `update` frames; the last value becomes the final response.
 
 ### `ToolContext`
 
@@ -192,16 +163,11 @@ ctx.cancelled           # set when pi aborts via AbortSignal
 await ctx.update(value) # stream an update frame to pi
 ```
 
-Cancellation is cooperative: when pi aborts the tool call, the TS shim
-destroys the bridge socket, which the server-side `watch_disconnect`
-task observes and uses to set `ctx.cancelled`. Long-running Python
-tools must check `ctx.cancelled` themselves.
+Cancellation is cooperative: when pi aborts the tool call, the TS shim destroys the bridge socket, which the server-side `watch_disconnect` task observes and uses to set `ctx.cancelled`. Long-running Python tools must check `ctx.cancelled` themselves.
 
 ### `PiRpcClient`
 
-Async client over `pi --mode rpc`. Strict LF-only JSONL framing.
-Request/response correlation by `id`; events go to an `asyncio.Queue`
-plus subscribed handlers. Methods:
+Async client over `pi --mode rpc`. Strict LF-only JSONL framing. Request/response correlation by `id`; events go to an `asyncio.Queue` plus subscribed handlers. Methods:
 
 ```python
 await client.prompt(message)
@@ -217,10 +183,7 @@ client.on_event(handler)                # returns unsubscribe fn
 client.set_extension_ui_handler(method, handler)
 ```
 
-Extension UI requests from pi are handled automatically in headless
-mode: `select / input / editor` get `cancelled: true`, `confirm` gets
-`confirmed: false`, fire-and-forget methods (`notify / setStatus / setWidget / setTitle / set_editor_text`) are queued as events without
-a response.
+Extension UI requests from pi are handled automatically in headless mode: `select / input / editor` get `cancelled: true`, `confirm` gets `confirmed: false`, fire-and-forget methods (`notify / setStatus / setWidget / setTitle / set_editor_text`) are queued as events without a response.
 
 ### `PiPythonHarness`
 
@@ -230,34 +193,38 @@ async with PiPythonHarness(registry, config=PiLaunchConfig(...)) as harness:
     await harness.client.prompt_and_wait("...")
 ```
 
-Owns the broker + generated shim + `PiRpcClient` lifecycle. Can also
-launch a separate test-only faux-provider extension (`fake_provider=True`)
-that emits a configured tool call followed by a final message — used
-by `test_real_pi_integration.py` to exercise pi's full tool loop
-without an LLM.
+Owns the broker + generated shim + `PiRpcClient` lifecycle. Can also launch a separate test-only faux-provider extension (`fake_provider=True`) that emits a configured tool call followed by a final message — used by `test_real_pi_integration.py` to exercise pi's full tool loop without an LLM.
+
+### Sessions
+
+We use **pi-native sessions** as the persistence and history-navigation model. Libharness does not maintain a parallel Python-side session record. Pi already represents history as a cross-file tree (each entry has a `parentId`; each session header can declare a `parentSession`), and forking from any entry in any prior session is a first-class operation. Reinventing that in Python would duplicate a non-trivial data structure for no clear gain.
+
+Persistence is configured on `PiLaunchConfig`:
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `no_session` | `True` | ephemeral; no JSONL written to disk |
+| `session_dir` | `None` | overrides `~/.pi/agent/sessions/<encoded-cwd>/` |
+| `session` | `None` | resume a session by path or partial UUID prefix |
+
+Currently exposed as typed methods on `PiRpcClient`: `new_session()`, `get_messages()`, `get_last_assistant_text()`. The rest of pi's session API (`fork`, `clone`, `switch_session`, `get_session_stats`, `export_html`, `set_session_name`, `get_fork_messages`) is reachable today via `client.send({"type": "..."})` and is planned to grow typed wrappers — see SESSION-STATE.md for the pending task.
+
+Background on pi's session model — the tree structure, the per-file vs per-session ID rules, and how forking actually writes new files — is in `dev-notes/2026-05-14-pi-internals-notes.md`.
 
 ## TypeScript shim
 
-A single ~250-line file (`PRODUCTION_TS_SHIM` in
-`src/libharness/pi/shim.py`). Generated to a temp file at startup. No
-per-tool logic. Imports only `node:net`, `node:crypto`, `typebox`, and
-two types from `@earendil-works/pi-coding-agent`.
+A single ~250-line file (`PRODUCTION_TS_SHIM` in `src/libharness/pi/shim.py`). Generated to a temp file at startup. No per-tool logic. Imports only `node:net`, `node:crypto`, `typebox`, and two types from `@earendil-works/pi-coding-agent`.
 
 Responsibilities:
 
 1. Read bridge coordinates from env.
 1. Issue `manifest` bridge call; assert `protocolVersion`.
-1. Register each tool with `pi.registerTool()`, wrapping the
-   JSON-Schema params via `Type.Unsafe(...)`.
-1. On `execute`, forward to the bridge and normalize the response
-   into pi's `AgentToolResult` shape.
+1. Register each tool with `pi.registerTool()`, wrapping the JSON-Schema params via `Type.Unsafe(...)`.
+1. On `execute`, forward to the bridge and normalize the response into pi's `AgentToolResult` shape.
 1. Forward Pi's `AbortSignal` into the bridge call (socket destroy).
-1. Optionally register diagnostic slash commands `/py-tools` and
-   `/py-tool` (gated on `PI_PY_DIAGNOSTIC_COMMANDS`).
+1. Optionally register diagnostic slash commands `/py-tools` and `/py-tool` (gated on `PI_PY_DIAGNOSTIC_COMMANDS`).
 
-The faux-provider extension is a separate generated file written only
-when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`,
-`fauxAssistantMessage`, and `fauxToolCall` APIs.
+The faux-provider extension is a separate generated file written only when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`, `fauxAssistantMessage`, and `fauxToolCall` APIs.
 
 ## Failure modes
 
@@ -274,73 +241,48 @@ when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`,
 
 **Detail:**
 
-- *Pi process fails to start.* `PiRpcClient.start()` raises
-  `PiRpcProcessError` with the captured stderr; callers should validate
-  the `PI_CLI` path before reaching this point.
-- *Invalid manifest.* The TS shim throws during extension load and pi
-  surfaces the error. Mitigation is to pin `MANIFEST_PROTOCOL_VERSION` on
-  both sides so drift is caught at the handshake.
-- *Python tool raises.* Bridge returns `success: false`; shim raises; pi
-  records a tool failure in the agent loop. Add an app-level error policy
-  and observability layer.
-- *Bridge unreachable.* Shim connection error; the tool call fails. The
-  server is started before pi launches; readiness is implicit (bound
-  socket).
-- *RPC JSON parse error.* `StrictJsonlDecoder` raises with a preview of
-  the offending bytes. Mitigations: LF-only framing on both sides; a
-  bounded buffer (16 MB) prevents memory exhaustion on unterminated
-  frames.
-- *Pi aborts tool call.* The shim destroys the bridge socket; the
-  server's `watch_disconnect` task sets `ctx.cancelled`. Long-running
-  Python tools must check the flag.
-- *Concurrent mutation conflict.* Race possible if two parallel tools
-  touch shared state. Mark mutating tools `execution_mode="sequential"`
-  or implement per-resource locks.
-- *Pi RPC field-name drift.* Pi returns `success: false` and the client
-  raises `PiRpcError`. Add per-command regression tests (cf.
-  `tests/pi/test_set_model.py`).
+- *Pi process fails to start.* `PiRpcClient.start()` raises `PiRpcProcessError` with the captured stderr; callers should validate the `PI_CLI` path before reaching this point.
+- *Invalid manifest.* The TS shim throws during extension load and pi surfaces the error. Mitigation is to pin `MANIFEST_PROTOCOL_VERSION` on both sides so drift is caught at the handshake.
+- *Python tool raises.* Bridge returns `success: false`; shim raises; pi records a tool failure in the agent loop. Add an app-level error policy and observability layer.
+- *Bridge unreachable.* Shim connection error; the tool call fails. The server is started before pi launches; readiness is implicit (bound socket).
+- *RPC JSON parse error.* `StrictJsonlDecoder` raises with a preview of the offending bytes. Mitigations: LF-only framing on both sides; a bounded buffer (16 MB) prevents memory exhaustion on unterminated frames.
+- *Pi aborts tool call.* The shim destroys the bridge socket; the server's `watch_disconnect` task sets `ctx.cancelled`. Long-running Python tools must check the flag.
+- *Concurrent mutation conflict.* Race possible if two parallel tools touch shared state. Mark mutating tools `execution_mode="sequential"` or implement per-resource locks.
+- *Pi RPC field-name drift.* Pi returns `success: false` and the client raises `PiRpcError`. Add per-command regression tests (cf. `tests/pi/test_set_model.py`).
 
 ## Roadmap
 
-The current scope is **tool execution only**. v3's design called out
-three further customization surfaces that match pi's extension API.
-None of them are implemented; they all build on the same bridge.
+The current scope is **tool execution only**. v3's design called out three further customization surfaces that match pi's extension API. None of them are implemented; they all build on the same bridge.
 
 ### Event bridge
 
-Forward pi extension events (`tool_call`, `tool_result`,
-`session_start`, `agent_start`, `agent_end`, `message_*`, …) into
-Python event handlers. Enables permission gates, path protection,
-context injection, logging.
+Forward pi extension events (`tool_call`, `tool_result`, `session_start`, `agent_start`, `agent_end`, `message_*`, …) into Python event handlers. Enables permission gates, path protection, context injection, logging.
 
-Co-design required before implementation. Proposal:
-`dev-notes/2026-05-14-event-bridge-proposal.md`.
+Co-design required before implementation. Proposal: `dev-notes/2026-05-14-event-bridge-proposal.md`.
 
 ### Command bridge
 
-Let Python register pi slash commands (`/something`) the same way
-extensions can. The shim mirrors a Python-side command manifest into
-`pi.registerCommand()` and forwards invocation back.
+Let Python register pi slash commands (`/something`) the same way extensions can. The shim mirrors a Python-side command manifest into `pi.registerCommand()` and forwards invocation back.
 
 ### State bridge
 
-Let Python query and mutate session state where pi exposes it: append
-entries, set active tools, set model, get commands, reload. Requires
-careful contracts around mutation timing.
+Let Python query and mutate session state where pi exposes it: append entries, set active tools, set model, get commands, reload. Requires careful contracts around mutation timing.
 
 ### UI bridge
 
-RPC already exposes `extension_ui_request` / `extension_ui_response`
-for dialogs. The harness already auto-handles these in headless mode.
-A richer UI bridge would let Python implement `select / input / confirm / editor` flows interactively — useful for non-pi UIs hosting
-the harness. Beyond that, pi's TUI component factories are not RPC-
-accessible; a Python-first integration should render its own UI on
-top of the event stream rather than try to project pi's TUI.
+RPC already exposes `extension_ui_request` / `extension_ui_response` for dialogs. The harness already auto-handles these in headless mode. A richer UI bridge would let Python implement `select / input / confirm / editor` flows interactively — useful for non-pi UIs hosting the harness. Beyond that, pi's TUI component factories are not RPC-accessible; a Python-first integration should render its own UI on top of the event stream rather than try to project pi's TUI.
+
+## Resolved decisions
+
+Decisions made and their rationale. New decisions append; old ones stay for historical context (mark as superseded if reversed, never delete).
+
+| Date | Decision | Brief rationale | Reference |
+| --- | --- | --- | --- |
+| 2026-05-14 | Bridge transport: loopback TCP + bearer token, not Unix domain socket | The token already addresses the realistic local-process threat; UDS would be a marginal hardening, not a structural fix. Windows support preserved for free. | `dev-notes/2026-05-14-pi-internals-notes.md` § Bridge transport |
+| 2026-05-14 | Sessions: use pi-native; no Python-side session model | Pi already maintains a cross-file tree-of-entries with first-class fork/branch operations. Replicating in Python would duplicate non-trivial state with no clear gain. | `dev-notes/2026-05-14-pi-internals-notes.md` § Session structure |
 
 ## When to switch away
 
-- **Pi SDK directly** if the surrounding product is Node/TypeScript
-  and wants in-process access to `AgentSession` on every operation.
-- **Patch/fork pi** only if Python plugin registration without a TS
-  shim is mandatory and you'll maintain upstream compatibility.
+- **Pi SDK directly** if the surrounding product is Node/TypeScript and wants in-process access to `AgentSession` on every operation.
+- **Patch/fork pi** only if Python plugin registration without a TS shim is mandatory and you'll maintain upstream compatibility.
 - **Reimplement pi** — discards the value of using pi; not recommended.
