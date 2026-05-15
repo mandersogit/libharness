@@ -1,0 +1,32 @@
+repo: .
+
+commits:
+  - message: |
+      test(pi): add real-LLM live test (P2)
+
+      tests/pi/test_real_llm.py is the second live test, alongside the
+      faux-provider integration test. It proves the full round-trip:
+
+        Python parent → libharness.pi.PiPythonHarness
+          → pi --mode rpc (sandboxed)
+          → real LLM (ChatGPT OAuth → gpt-5.5 by default)
+          → tool call decision
+          → bridge back into Python
+          → Python `echo` tool executes
+          → result threaded back through pi → agent_end
+
+      Gates on both PI_CLI (required for any live test) AND the presence
+      of a non-stub `~/.pi/agent/auth.json` (>100 bytes), so contributors
+      without an OAuth login can still run `make test-live` without
+      spurious failures. The `live` marker keeps it out of `make test`.
+
+      The prompt is deliberately unambiguous ("Call the `echo` tool ...")
+      and the assertion checks tool-call invocation + args, not specific
+      model wording — keeps flakiness low without locking to a model.
+
+      Verified locally: `make test-live` → 2 passed, 6 deselected, 4.4s
+      (most of that is the real model call).
+    files:
+      - tests/pi/test_real_llm.py
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-14-add-real-llm-live-test.yaml

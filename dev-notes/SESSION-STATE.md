@@ -11,11 +11,14 @@ created: "2026-05-14"
 - v5 baseline ported into `src/libharness/pi/` (subpackage chosen so
   future non-pi harnesses get their own siblings; generalization is
   deferred).
-- All 7 tests pass: 6 unit tests + 1 live integration test against real
-  pi (`@earendil-works/pi-coding-agent@0.74.0`).
+- All 8 tests pass: 6 unit + 2 live (faux-provider integration test +
+  real-LLM end-to-end via ChatGPT OAuth → gpt-5.5).
 - `make all` clean: ruff, mypy strict, pyright basic, pytest (excluding
   live by default).
-- `make test-live` runs the integration test against the sandboxed pi.
+- `make test-live` runs both live tests against sandboxed pi.
+- OAuth credential copied from sibling sandbox at
+  `~/Downloads/pi_python_harness/.sandbox/pi-home/.pi/agent/auth.json`
+  into this repo's sandbox. Untracked (lives under `.sandbox/`).
 
 ## Port-pass changes vs v5 verbatim
 
@@ -50,10 +53,6 @@ In priority order. P1 first.
   regression test.
 - **P2: Add manifest `protocolVersion`** (from v3's design). TS shim
   enforces handshake; Python emits version 1.
-- **P2: Add real-LLM smoke test** (`tests/pi/test_real_llm.py`) gated
-  by `live` marker. Uses ChatGPT OAuth →
-  `openai-codex-responses` provider → real model → Python tool
-  roundtrip. (OAuth must be done in this sandbox first: `make login`.)
 - **P3: Write `docs/DESIGN.md` properly.** Base on v3's design doc plus
   v5's current implementation. Include roadmap section for the event /
   command / state / UI bridges.
@@ -67,8 +66,14 @@ In priority order. P1 first.
 - v5 source ported into `libharness.pi` subpackage; tests ported into
   `tests/pi/`. Mechanical changes only (module rename in tests +
   minimal lint/type fixes — see above).
-- pi sandbox bootstrapped in this repo (`.sandbox/`). No OAuth token
-  yet in this sandbox; live LLM tests will require `make login` first.
+- pi sandbox bootstrapped in this repo (`.sandbox/`).
+- OAuth credential copied from the sibling
+  `~/Downloads/pi_python_harness/` sandbox. (To set up from scratch,
+  `make login` instead.)
+- `tests/pi/test_real_llm.py` added — gates on PI_CLI AND on the
+  presence of `~/.pi/agent/auth.json` (~100B threshold to skip the
+  empty-`{}` stub case). Asserts that the model emits a tool call with
+  the requested args, not specific model wording.
 
 ## Notes for the next session
 
@@ -77,8 +82,7 @@ In priority order. P1 first.
 - After that, the protocolVersion work touches both the Python manifest
   emitter (`pi/tools.py:ToolRegistry.manifest`) and the TS shim
   (`pi/shim.py:PRODUCTION_TS_SHIM`). One commit.
-- For the real-LLM test, you'll need to `make login` first to get an
-  OAuth token in `.sandbox/pi-home/.pi/agent/auth.json`. The test
-  itself should `skipif` on the auth file's absence (separate from the
-  `live` marker — `live` means "needs sandbox pi"; the LLM check is
-  finer-grained).
+- The model selection in `test_real_llm.py` is implicit (pi reads the
+  default from `settings.json` in the sandboxed home). If we want
+  determinism across contributor environments, pin via
+  `PiLaunchConfig(provider=..., model=...)`.
