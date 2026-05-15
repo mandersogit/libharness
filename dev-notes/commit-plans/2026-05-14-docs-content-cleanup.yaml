@@ -1,0 +1,48 @@
+repo: .
+
+commits:
+  - message: |
+      docs: content cleanup pass over dev-notes and docs
+
+      Substantive document cleanup beyond the prior mechanical lint pass:
+
+      Frontmatter added (per the dev-notes/ convention):
+        - dev-notes/2026-05-14-pi-python-harness-version-review.md
+        - dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md
+      Both marked `status: Historical` with a blockquote at the top noting
+      libharness has acted on their recommendations and pointing at
+      SESSION-STATE for current state.
+
+      Paths made absolute. The two review docs were copied from a sibling
+      workspace and still cited `../prompt.txt`, `../version-N/...`, and
+      bare `pi-main/...` paths. All converted to absolute
+      `~/Downloads/pi_python_harness/...` to match the
+      reference_pi_source memory and so the citations resolve regardless
+      of cwd. event-bridge proposal's one `pi-main/...` cite likewise.
+
+      Two sentences in docs/DESIGN.md that mdformat had broken into list
+      items (because the source had `+ ` at line-start after a soft wrap
+      — mdformat treats that as a `+`-style unordered-list marker)
+      rejoined into prose:
+        - "...real `registerFauxProvider` + `fauxAssistantMessage` +
+          `fauxToolCall` APIs." → "...real `registerFauxProvider`,
+          `fauxAssistantMessage`, and `fauxToolCall` APIs."
+        - "Add an app-level error policy + observability layer." →
+          "Add an app-level error policy and observability layer."
+
+      Trivial spacing fix in version-review's "Schema inference is
+      shallow" bullet ("list/ dict" → "list/dict") and a soft-wrap
+      improvement around the same sentence.
+
+      dev-notes/README.md index updated: removed the obsolete "paths
+      reference that workspace" note (paths are now absolute); added an
+      entry for the event-bridge proposal.
+
+      `make lint-md` clean (0 errors across 9 files). `make all` clean.
+    files:
+      - docs/DESIGN.md
+      - dev-notes/README.md
+      - dev-notes/2026-05-14-pi-python-harness-version-review.md
+      - dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md
+      - dev-notes/2026-05-14-event-bridge-proposal.md
+      - dev-notes/commit-plans/2026-05-14-docs-content-cleanup.yaml

@@ -256,9 +256,8 @@ Responsibilities:
    `/py-tool` (gated on `PI_PY_DIAGNOSTIC_COMMANDS`).
 
 The faux-provider extension is a separate generated file written only
-when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`
-
-- `fauxAssistantMessage` + `fauxToolCall` APIs.
+when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`,
+`fauxAssistantMessage`, and `fauxToolCall` APIs.
 
 ## Failure modes
 
@@ -283,7 +282,7 @@ when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`
   both sides so drift is caught at the handshake.
 - *Python tool raises.* Bridge returns `success: false`; shim raises; pi
   records a tool failure in the agent loop. Add an app-level error policy
-  - observability layer.
+  and observability layer.
 - *Bridge unreachable.* Shim connection error; the tool call fails. The
   server is started before pi launches; readiness is implicit (bound
   socket).

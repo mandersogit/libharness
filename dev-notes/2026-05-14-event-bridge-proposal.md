@@ -20,7 +20,8 @@ on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 // ... ~23 more
 ```
 
-Full list lives in `pi-main/packages/coding-agent/src/core/extensions/types.ts:1089-1126`.
+Full list lives in
+`~/Downloads/pi_python_harness/pi-main/packages/coding-agent/src/core/extensions/types.ts:1089-1126`.
 The handler signature is:
 
 ```ts

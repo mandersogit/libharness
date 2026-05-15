@@ -1,17 +1,34 @@
+---
+status: Historical
+created: '2026-05-14'
+---
+
 # Review: four parallel ChatGPT 5.5 Pro implementations of a Python-first pi harness
 
 Reviewer: Claude Opus 4.7. Date: 2026-05-14.
 
-Prompt the four runs were given lives at `../prompt.txt`. Each run produced
-docs (assessment, design, journal, executive summary), a Python library, a
-generated/embedded TypeScript shim, and a small test suite. Source for each:
+> **Status: historical.** Written *before* v5 existed. Its sibling
+> [v5 synthesis review](./2026-05-14-pi-python-harness-v5-synthesis-review.md)
+> is the follow-up. The "What I'd lift from each" and "What to do next"
+> sections describe a path libharness has since taken: v5's core was
+> ported into `src/libharness/pi/`, v3's manifest `protocolVersion`
+> handshake was added, the `set_model` bug v5 inherited was fixed. See
+> `dev-notes/SESSION-STATE.md` for current state.
 
-- `../version-1/pi_python_harness/`
-- `../version-2/pi_python_harness_artifacts/`
-- `../version-3/pi-python-harness/`
-- `../version-4/pi_python_harness/`
+The four PoC implementations live in a sibling workspace at
+`~/Downloads/pi_python_harness/`:
 
-The reference pi source lives at `../pi-main/`.
+- `~/Downloads/pi_python_harness/version-1/pi_python_harness/`
+- `~/Downloads/pi_python_harness/version-2/pi_python_harness_artifacts/`
+- `~/Downloads/pi_python_harness/version-3/pi-python-harness/`
+- `~/Downloads/pi_python_harness/version-4/pi_python_harness/`
+
+The prompt all four runs were given:
+`~/Downloads/pi_python_harness/prompt.txt`. Each run produced docs
+(assessment, design, journal, executive summary), a Python library, a
+generated/embedded TypeScript shim, and a small test suite. The
+reference pi source the runs were given lives at
+`~/Downloads/pi_python_harness/pi-main/`.
 
 ## Ground truth on pi
 
@@ -153,7 +170,7 @@ async-everywhere approach.
 The cleanest implementation overall. Two things stand out:
 
 1. **Uses pi-ai's real `registerFauxProvider` API** (verified at
-   `pi-main/packages/ai/src/providers/faux.ts`) instead of hand-rolling
+   `~/Downloads/pi_python_harness/pi-main/packages/ai/src/providers/faux.ts`) instead of hand-rolling
    event emission. Much less likely to break on pi upgrades.
 1. **The TS shim spawns the Python tool server as its own child process
    over stdio.** No TCP port, no localhost binding, no token-leak window —
@@ -232,7 +249,9 @@ the friendliest layout.
   functions.** All can disconnect the bridge socket on Pi abort, which
   makes Python see EOF; none signal the Python coroutine. v3's design
   describes a cancellation token; nobody shipped it.
-- **Schema inference is shallow.** All four cover `str/int/float/bool/list/ dict/Optional/Union`. None cover `pydantic`/`dataclass`/`TypedDict`
+- **Schema inference is shallow.** All four cover
+  `str/int/float/bool/list/dict/Optional/Union`. None cover
+  `pydantic`/`dataclass`/`TypedDict`
   parameter types out of the box, though all allow passing an explicit
   schema. Worth flagging because, in Python, "tool author writes a Pydantic
   model" is the dominant idiom in adjacent ecosystems.
