@@ -297,8 +297,10 @@ class PiRpcClient:
         data = (await self.send({"type": "get_available_models"})).get("data") or {}
         return list(data.get("models") or data.get("availableModels") or [])
 
-    async def set_model(self, provider: str, model: str) -> JsonObject:
-        return await self.send({"type": "set_model", "provider": provider, "model": model})
+    async def set_model(self, provider: str, model_id: str) -> JsonObject:
+        # Pi's RPC contract requires ``modelId``, not ``model`` — see
+        # packages/coding-agent/src/modes/rpc/rpc-types.ts:31 in pi-mono.
+        return await self.send({"type": "set_model", "provider": provider, "modelId": model_id})
 
     async def bash(self, command: str) -> JsonObject:
         return dict((await self.send({"type": "bash", "command": command})).get("data") or {})

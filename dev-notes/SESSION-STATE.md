@@ -47,10 +47,6 @@ No semantic changes. No bug fixes were applied during the port; the
 
 In priority order. P1 first.
 
-- **P1: Fix `set_model` bug** (`pi/rpc.py`, sends `model` instead of
-  `modelId`). Pi expects `modelId` per
-  `pi-main/packages/coding-agent/src/modes/rpc/rpc-types.ts:31`. Add
-  regression test.
 - **P2: Add manifest `protocolVersion`** (from v3's design). TS shim
   enforces handshake; Python emits version 1.
 - **P3: Write `docs/DESIGN.md` properly.** Base on v3's design doc plus

@@ -1,0 +1,30 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): set_model wire shape — `model` → `modelId` (P1)
+
+      The v5 PiRpcClient.set_model serialized its second argument as
+      ``{"type": "set_model", "provider": ..., "model": ...}``. Pi's RPC
+      contract requires the field to be named ``modelId``:
+
+        pi-mono/packages/coding-agent/src/modes/rpc/rpc-types.ts:31
+          | { id?: string; type: "set_model"; provider: string; modelId: string }
+
+      and the handler explicitly errors on missing model id
+      (rpc-mode.ts:457). v5 shipped this bug silently because its
+      integration test passes provider/model via --provider/--model CLI
+      flags at launch and never exercises the set_model RPC.
+
+      Also renames the Python parameter from ``model`` to ``model_id``
+      so the call site signals the wire shape and matches pi's naming.
+
+      Adds tests/pi/test_set_model.py: pins both the field name and the
+      absence of any stray `model` key. Uses tests/pi/fake_pi_rpc.py
+      (extended to echo set_model requests back in ``data.received``).
+    files:
+      - src/libharness/pi/rpc.py
+      - tests/pi/fake_pi_rpc.py
+      - tests/pi/test_set_model.py
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-14-fix-set-model.yaml

@@ -25,5 +25,8 @@ for raw in sys.stdin:
         send({"type": "response", "id": request.get("id"), "success": True, "data": {}})
         send({"type": "agent_start"})
         send({"type": "agent_end"})
+    elif typ == "set_model":
+        # Echo the full request back so tests can assert on the wire shape.
+        send({"type": "response", "id": request.get("id"), "success": True, "data": {"received": request}})
     else:
         send({"type": "response", "id": request.get("id"), "success": True, "data": {}})
