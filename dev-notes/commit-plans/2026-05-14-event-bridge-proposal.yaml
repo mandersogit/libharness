@@ -1,0 +1,20 @@
+repo: .
+
+commits:
+  - message: |
+      docs: event bridge proposal (CO-DESIGN, no implementation)
+
+      Writes dev-notes/2026-05-14-event-bridge-proposal.md to frame the
+      design space for the first customization surface beyond tool
+      execution. The proposal is intentionally non-prescriptive: it
+      states ground truth about pi's event API (cited to source line
+      numbers), sketches three protocol shapes (notify-only,
+      full-roundtrip, hybrid), enumerates decision points, and stops.
+
+      Status frontmatter: "In co-design". Per CLAUDE.md, implementation
+      is gated on author sign-off on §Decision points.
+
+      No code changes.
+    files:
+      - dev-notes/2026-05-14-event-bridge-proposal.md
+      - dev-notes/commit-plans/2026-05-14-event-bridge-proposal.yaml
