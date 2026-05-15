@@ -1,6 +1,6 @@
 ---
-status: "In co-design"
-created: "2026-05-14"
+status: In co-design
+created: '2026-05-14'
 ---
 
 # Event bridge proposal
@@ -48,18 +48,28 @@ tracking.
 
 The handler's return value flows back into pi and changes behavior.
 
-| Event | Result type | What pi does with it |
-|---|---|---|
-| `tool_call` | `{block?, reason?}` | If `block: true`, suppresses tool execution (or modifies in place — see below) |
-| `tool_result` | `{content?, details?, isError?}` | Replaces the tool result content before pi continues |
-| `message_end` | `{message?}` | Replaces the finalized assistant message (role preserved) |
-| `before_agent_start` | `{message?, systemPrompt?}` | Injects a system prompt; multiple extensions chain |
-| `before_provider_request` | `unknown` | Reserved; least documented |
-| `context` | `{messages?}` | Replaces the message list sent to the model |
-| `session_before_switch/fork/compact/tree` | `{cancel?}` | Vetoes the action |
-| `user_bash` | `{operations?}` | Overrides the bash executor for the call |
-| `input` | `InputEventResult` | Custom routing of user input |
-| `resources_discover` | `ResourcesDiscoverResult` | Modifies discovered resources |
+| Event                     | Result type                      | What pi does with it           |
+| ------------------------- | -------------------------------- | ------------------------------ |
+| `tool_call`               | `{block?, reason?}`              | Block tool execution           |
+| `tool_result`             | `{content?, details?, isError?}` | Replace tool result content    |
+| `message_end`             | `{message?}`                     | Replace finalized message      |
+| `before_agent_start`      | `{message?, systemPrompt?}`      | Inject system prompt (chained) |
+| `before_provider_request` | `unknown`                        | Reserved; least documented     |
+| `context`                 | `{messages?}`                    | Replace messages sent to model |
+| `session_before_*`        | `{cancel?}`                      | Veto switch/fork/compact/tree  |
+| `user_bash`               | `{operations?}`                  | Override bash executor         |
+| `input`                   | `InputEventResult`               | Custom user-input routing      |
+| `resources_discover`      | `ResourcesDiscoverResult`        | Modify discovered resources    |
+
+**Detail:**
+
+- *`tool_call`.* If the handler returns `block: true`, pi suppresses tool
+  execution. Tool arguments can also be modified by mutating `event.input`
+  in place (see "Subtleties" below — cross-process mutation is awkward).
+- *`session_before_*`.* Four events (`session_before_switch`,
+  `session_before_fork`, `session_before_compact`, `session_before_tree`),
+  each with `{cancel?: boolean}`. Returning `cancel: true` vetoes the
+  action.
 
 Use cases: permission gates ("block bash with rm -rf"), path
 protection, context injection, system prompt override, custom
@@ -123,11 +133,13 @@ def log_start(event: AgentStartEvent) -> None:
 ```
 
 Pros:
+
 - Simplest protocol; lowest risk.
 - Zero latency on pi's hot path (fire-and-forget).
 - Covers the entire "observability / logging / metrics" use case.
 
 Cons:
+
 - Doesn't unlock the interesting use cases (blocking, injection,
   replacement).
 - Forwarding high-frequency events (`message_update`) is wasted
@@ -157,10 +169,12 @@ async def gate_bash(event: ToolCallEvent) -> ToolCallEventResult | None:
 ```
 
 Pros:
+
 - Realizes the full extension API in Python.
 - Symmetric with how tool execution already works.
 
 Cons:
+
 - Every subscribed event blocks pi until Python returns.
 - Pi's hot path now includes a network round-trip per event.
 - `tool_call`'s in-place input mutation needs special handling
@@ -189,12 +203,14 @@ event is either `"notify"` (fire-and-forget) or `"deliver"`
 ```
 
 Pros:
+
 - Subscribers pay round-trip cost only where they need it.
 - High-frequency telemetry events stay cheap.
 - The TS shim can pick the right `pi.on(...)` wiring per event
   (notify uses non-blocking, deliver uses awaited handler).
 
 Cons:
+
 - Two protocols to maintain.
 - Subscribers can mis-declare (subscribe to a result-bearing event
   as "notify" and silently lose decision power, or vice versa).
@@ -232,27 +248,27 @@ starts:
 1. **Scope of v1**: A (notify only), B (full), or C (hybrid)? If C,
    does v1 implement both halves or stage them (notify in v1,
    deliver in v2)?
-2. **Priority events**: which events do we wire first? My read of the
+1. **Priority events**: which events do we wire first? My read of the
    review history (event bridge unlocks "permission gates", "path
    protection", "context injection") suggests `tool_call`,
    `before_agent_start`, and `context` are the highest-value decision
    events. Confirm or override.
-3. **Handler-chaining semantics**: mirror pi (per-event chain
+1. **Handler-chaining semantics**: mirror pi (per-event chain
    semantics, expensive to get right) or simplify to one handler per
    event (cheap, may diverge from pi extensions' expected behavior)?
-4. **Failure mode default**: when a Python handler crashes or times
+1. **Failure mode default**: when a Python handler crashes or times
    out on a decision event, does pi proceed with the un-modified
    action (fail-open) or block/cancel (fail-closed)? Either is
    defensible. Likely needs to be configurable per event.
-5. **`tool_call.input` mutation**: skip in v1 (block-only), or
+1. **`tool_call.input` mutation**: skip in v1 (block-only), or
    support a returned-diff protocol from day one?
-6. **Event payload typing**: dict-based with documented shapes (fast
+1. **Event payload typing**: dict-based with documented shapes (fast
    to ship), or Python dataclasses mirroring pi's TS types (more
    typing, more maintenance, but better DX and refactor safety)?
-7. **ExtensionContext methods** (`triggerCompaction`, `abortAgent`):
+1. **ExtensionContext methods** (`triggerCompaction`, `abortAgent`):
    defer to a separate "state bridge" task, or fold a minimal version
    into the event bridge?
-8. **Subscription model**: static (declared in the manifest at
+1. **Subscription model**: static (declared in the manifest at
    startup, registered once) or dynamic (Python can subscribe/
    unsubscribe at runtime via new bridge messages)? Static is the
    obvious starting point; dynamic costs a small protocol expansion.

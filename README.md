@@ -41,7 +41,7 @@ excludes them via the `live` pytest marker.
 
 ## Layout
 
-```
+```text
 libharness/
   Makefile               primary user-facing surface
   src/libharness/        Python implementation (TBD)

@@ -1,20 +1,25 @@
 ---
-status: "Active"
-created: "2026-05-14"
+status: Active
+created: '2026-05-14'
 ---
 
 # Session state
 
 ## Current state
 
-- 7 commits on `main`. v5 baseline ported into `src/libharness/pi/`,
-  `set_model` bug fixed with regression test, manifest
-  `protocolVersion=1` handshake added, `docs/DESIGN.md` written.
+- v5 baseline ported into `src/libharness/pi/`, `set_model` bug fixed
+  with regression test, manifest `protocolVersion=1` handshake added,
+  `docs/DESIGN.md` written, event-bridge proposal in co-design.
 - All 10 tests pass: 7 unit + 2 live (faux-provider integration + real
   LLM via ChatGPT OAuth → gpt-5.5) + 1 set_model regression.
 - `make all` clean: ruff, mypy strict, pyright basic, pytest (excluding
   live by default).
 - `make test-live` runs the live tests against sandboxed pi.
+- Markdown toolchain wired in: `make {lint-md, lint-md-tables, format-md, format-md-check}`. Inherited from hildy/not-pi-2:
+  mdformat (Python venv) + markdownlint-cli2 (Node, in
+  `/opt/miniforge/envs/dev-tools/`). `.markdownlint.json` at root.
+  Markdown targets are NOT in `make all`. Per-file workflow in
+  CLAUDE.md.
 - OAuth credential copied from sibling sandbox at
   `~/Downloads/pi_python_harness/.sandbox/pi-home/.pi/agent/auth.json`.
   Untracked (lives under `.sandbox/`). To set up from scratch:
@@ -39,6 +44,12 @@ created: "2026-05-14"
 - Manifest `protocolVersion=1` + shim handshake (`b4d2ccd`).
 - `docs/DESIGN.md` written. Tool execution surface fully documented;
   roadmap calls out event/command/state/UI bridges.
+- Event-bridge proposal at
+  `dev-notes/2026-05-14-event-bridge-proposal.md`; in co-design.
+- Markdown toolchain wired in (mdformat + markdownlint-cli2 + sidecar
+  table rule). All existing markdown reformatted; wide tables in the
+  version-review, event-bridge proposal, and DESIGN.md restructured
+  to use the sidecar pattern.
 
 ## Notes for the next session
 
@@ -49,7 +60,6 @@ created: "2026-05-14"
   determinism across contributor environments, pin via
   `PiLaunchConfig(provider=..., model=...)`.
 - One v3 idea we did *not* port: handlers that are sync generators
-  yielding multiple `update` frames are supported in `tools.py:
-  collect_tool_result`, but there's no test that exercises a generator
+  yielding multiple `update` frames are supported in `tools.py: collect_tool_result`, but there's no test that exercises a generator
   end-to-end through the bridge. Worth a regression test before we
   rely on it.

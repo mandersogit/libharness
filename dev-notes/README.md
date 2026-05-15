@@ -1,6 +1,6 @@
 ---
-status: "Active"
-created: "2026-05-14"
+status: Active
+created: '2026-05-14'
 ---
 
 # dev-notes

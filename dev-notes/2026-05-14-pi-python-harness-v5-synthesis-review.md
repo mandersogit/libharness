@@ -15,12 +15,12 @@ calls out what it kept, dropped, added, missed, and got wrong.
 
 The synthesis renames the four prior runs. Mapping by content:
 
-| v5 label | My label | Tell                                                                |
-| -------- | -------- | ------------------------------------------------------------------- |
-| A        | v4       | "Python HTTP/NDJSON tool broker" — only v4 used HTTP                |
-| B        | v3       | "async TCP JSONL tool server" + headless extension-UI handling      |
-| C        | v2       | "TS extension spawns a Python tool server over stdio"               |
-| D        | v1       | "static packaged TS extension" + "fake provider in shim"            |
+| v5 label | My label | Tell                                                           |
+| -------- | -------- | -------------------------------------------------------------- |
+| A        | v4       | "Python HTTP/NDJSON tool broker" — only v4 used HTTP           |
+| B        | v3       | "async TCP JSONL tool server" + headless extension-UI handling |
+| C        | v2       | "TS extension spawns a Python tool server over stdio"          |
+| D        | v1       | "static packaged TS extension" + "fake provider in shim"       |
 
 The audit's per-attempt critiques are accurate against the actual code.
 Below I use v1–v4 to stay consistent with the earlier review.
@@ -78,8 +78,7 @@ These are not present in any of the four predecessors:
 - **Bridge buffer cap** (`jsonl.py:32-45`) — `max_buffer_bytes` to
   reject unterminated JSONL frames before they exhaust memory.
 - **Defensive launch flags as defaults.** `PiLaunchConfig` defaults to
-  `offline=True, no_session=True, no_extensions=True, no_skills=True,
-  no_prompt_templates=True, no_context_files=True`, with explicit
+  `offline=True, no_session=True, no_extensions=True, no_skills=True, no_prompt_templates=True, no_context_files=True`, with explicit
   opt-in for `no_builtin_tools` and `--tools <list>`. v1 had these as
   config booleans too; v2/v3/v4 were less complete on this. I verified
   `--no-builtin-tools` is a real flag at
@@ -113,8 +112,7 @@ The handler explicitly errors on a missing model id:
 return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
 ```
 
-v1's client got this field right (`{"provider": provider, "modelId":
-model_id}`); v5 broke it during the rewrite. **The integration test
+v1's client got this field right (`{"provider": provider, "modelId": model_id}`); v5 broke it during the rewrite. **The integration test
 would not catch this**, because the test uses `--provider` and `--model`
 CLI flags to pick the faux model at launch and never issues a
 `set_model` RPC call. The "7 passed" claim therefore overstates the
@@ -205,27 +203,26 @@ For "I want to ship and iterate on this":
 
 1. **v5** — best implementation. Worth fixing the `set_model` bug and
    adopting v3's design doc as the planning document.
-2. **v2** — second-best, especially if the "TS spawns Python" lifecycle
+1. **v2** — second-best, especially if the "TS spawns Python" lifecycle
    inversion is acceptable. Strongest evidence of real-pi behavior
    relative to its scope.
-3. **v1** — strongest "actually exercised the full agent loop" test
+1. **v1** — strongest "actually exercised the full agent loop" test
    demonstration; its shim is what v5 effectively re-uses.
-4. **v3** — best design doc, weakest tested code. Use the docs.
-5. **v4** — solid debuggable HTTP variant; loses to v5 on every axis
+1. **v3** — best design doc, weakest tested code. Use the docs.
+1. **v4** — solid debuggable HTTP variant; loses to v5 on every axis
    v4 was good at.
 
 ## Concrete follow-ups before adopting v5
 
 1. Fix `rpc.py:301-302`: change `"model": model` to `"modelId": model`.
-2. Add an integration test that calls `client.set_model(...)` after
+1. Add an integration test that calls `client.set_model(...)` after
    startup against the faux provider — this is the kind of bug that
    should not survive a "synthesis" pass twice.
-3. Adopt v3's manifest `protocolVersion` field; add a handshake check
+1. Adopt v3's manifest `protocolVersion` field; add a handshake check
    in the TS shim.
-4. Take v3's design doc, retitle it for v5, and use it as the planning
+1. Take v3's design doc, retitle it for v5, and use it as the planning
    doc for the event/command/provider/UI bridges that the synthesis
    left out.
-5. Confirm in this environment (Node 20+) that
-   `PI_CLI=$(npm root -g)/@earendil-works/pi-coding-agent/dist/cli.js
-   python -m pytest -q` actually goes green before reading further
+1. Confirm in this environment (Node 20+) that
+   `PI_CLI=$(npm root -g)/@earendil-works/pi-coding-agent/dist/cli.js python -m pytest -q` actually goes green before reading further
    confidence into the "7 passed" claim.

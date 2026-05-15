@@ -25,7 +25,7 @@ exist) get their own sibling subpackage and their own design doc.
 
 ## Architecture
 
-```
+```text
 Python application
   ├─ ToolRegistry           (@register decorators, JSON Schema from hints)
   ├─ PythonToolServer       (asyncio JSONL server on 127.0.0.1, token-protected)
@@ -43,7 +43,7 @@ The two protocols are deliberately separate:
 
 1. **Pi RPC** between the Python parent and pi (JSONL on pi's
    stdin/stdout). Owned by pi; we are a client.
-2. **Bridge** between the TS shim (running inside pi) and the Python
+1. **Bridge** between the TS shim (running inside pi) and the Python
    tool server (loopback TCP JSONL with a bearer token). Owned by us
    on both sides.
 
@@ -53,23 +53,22 @@ touching the bridge and vice versa.
 ## Process lifecycle
 
 1. Python builds a `ToolRegistry` and decorates Python functions.
-2. `PiPythonHarness.start()` launches `PythonToolServer` on
+1. `PiPythonHarness.start()` launches `PythonToolServer` on
    `127.0.0.1:<ephemeral>` with a random per-run bearer token.
-3. The harness writes a generated TS shim into a temp dir.
-4. The harness launches pi with deterministic flags
-   (`--mode rpc --offline --no-session --no-extensions --no-skills
-   --no-prompt-templates --no-context-files --extension <shim>.ts`)
+1. The harness writes a generated TS shim into a temp dir.
+1. The harness launches pi with deterministic flags
+   (`--mode rpc --offline --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files --extension <shim>.ts`)
    and these env vars:
    - `PI_PY_TOOLS_HOST`, `PI_PY_TOOLS_PORT`, `PI_PY_TOOLS_TOKEN`
    - `PI_PY_BRIDGE_TIMEOUT_MS`
    - `PI_PY_DIAGNOSTIC_COMMANDS`
    - `HOME` is pinned at the sandbox path so pi's `~/.pi/` lands
      inside `.sandbox/pi-home/.pi/`.
-5. Pi loads the shim via `jiti`. The shim issues a `manifest` bridge
+1. Pi loads the shim via `jiti`. The shim issues a `manifest` bridge
    call, asserts `protocolVersion == 1`, and calls `pi.registerTool()`
    for each tool.
-6. Python sends prompts and control commands via `PiRpcClient`.
-7. When the model emits a tool call, pi validates the args, calls the
+1. Python sends prompts and control commands via `PiRpcClient`.
+1. When the model emits a tool call, pi validates the args, calls the
    shim's `execute()`, which forwards an `execute` bridge call to
    Python. Python runs the tool, optionally streams `update` frames,
    and returns a final `response` frame. The shim normalizes to
@@ -169,8 +168,7 @@ async def echo(message: str, ctx: ToolContext) -> ToolResult:
     return ToolResult.text(f"echo: {message}")
 ```
 
-Schema inference covers `str / int / float / bool / list[T] / dict[K, V]
-/ Optional[T] / Union[…] / Literal[...] / Enum / @dataclass`. Pass an
+Schema inference covers `str / int / float / bool / list[T] / dict[K, V] / Optional[T] / Union[…] / Literal[...] / Enum / @dataclass`. Pass an
 explicit `parameters=` dict for anything outside that subset. Tool names
 are validated against a conservative regex; duplicates raise `ToolError`.
 
@@ -221,8 +219,7 @@ client.set_extension_ui_handler(method, handler)
 
 Extension UI requests from pi are handled automatically in headless
 mode: `select / input / editor` get `cancelled: true`, `confirm` gets
-`confirmed: false`, fire-and-forget methods (`notify / setStatus /
-setWidget / setTitle / set_editor_text`) are queued as events without
+`confirmed: false`, fire-and-forget methods (`notify / setStatus / setWidget / setTitle / set_editor_text`) are queued as events without
 a response.
 
 ### `PiPythonHarness`
@@ -249,31 +246,60 @@ two types from `@earendil-works/pi-coding-agent`.
 Responsibilities:
 
 1. Read bridge coordinates from env.
-2. Issue `manifest` bridge call; assert `protocolVersion`.
-3. Register each tool with `pi.registerTool()`, wrapping the
+1. Issue `manifest` bridge call; assert `protocolVersion`.
+1. Register each tool with `pi.registerTool()`, wrapping the
    JSON-Schema params via `Type.Unsafe(...)`.
-4. On `execute`, forward to the bridge and normalize the response
+1. On `execute`, forward to the bridge and normalize the response
    into pi's `AgentToolResult` shape.
-5. Forward Pi's `AbortSignal` into the bridge call (socket destroy).
-6. Optionally register diagnostic slash commands `/py-tools` and
+1. Forward Pi's `AbortSignal` into the bridge call (socket destroy).
+1. Optionally register diagnostic slash commands `/py-tools` and
    `/py-tool` (gated on `PI_PY_DIAGNOSTIC_COMMANDS`).
 
 The faux-provider extension is a separate generated file written only
 when `fake_provider=True`. It uses pi-ai's real `registerFauxProvider`
-+ `fauxAssistantMessage` + `fauxToolCall` APIs.
+
+- `fauxAssistantMessage` + `fauxToolCall` APIs.
 
 ## Failure modes
 
-| Failure                              | Expected behavior                                        | Mitigation                                                  |
-| ------------------------------------ | -------------------------------------------------------- | ----------------------------------------------------------- |
-| Pi process fails to start            | `PiRpcProcessError` from `PiRpcClient.start()` with stderr | Validate `PI_CLI` path before launch                        |
-| Invalid manifest                     | Shim throws during extension load; pi reports the error  | Pin `MANIFEST_PROTOCOL_VERSION` in both sides               |
-| Python tool raises                   | Bridge returns `success: false`; shim raises; pi records tool failure | App-level error policy and observability                    |
-| Bridge unreachable                   | Shim connection error; tool call fails                   | Server starts before pi; readiness implicit (server bound)  |
-| RPC JSON parse error                 | `StrictJsonlDecoder` raises with preview                 | LF-only framing on both sides; bounded buffer (16 MB)       |
-| Pi aborts tool call                  | Shim destroys socket; server's `watch_disconnect` sets `ctx.cancelled` | Long-running Python tools must check the flag               |
-| Concurrent mutation conflict         | Race possible if two parallel tools touch shared state   | Mark mutating tools `execution_mode="sequential"`, or lock  |
-| Pi RPC field-name drift              | Pi returns `success: false`; `PiRpcError` raised         | Per-command regression tests (cf. `test_set_model.py`)      |
+| Failure                      | Expected behavior              | Mitigation                            |
+| ---------------------------- | ------------------------------ | ------------------------------------- |
+| Pi process fails to start    | `PiRpcProcessError` + stderr   | Validate `PI_CLI` before launch       |
+| Invalid manifest             | Shim throws on extension load  | Pin `MANIFEST_PROTOCOL_VERSION`       |
+| Python tool raises           | Bridge `success: false`        | App-level error policy + obs.         |
+| Bridge unreachable           | Shim connection error          | Server starts before pi               |
+| RPC JSON parse error         | `StrictJsonlDecoder` raises    | LF-only framing; 16 MB buffer cap     |
+| Pi aborts tool call          | `ctx.cancelled` set via socket | Long-running tools check the flag     |
+| Concurrent mutation conflict | Race on shared state           | `execution_mode="sequential"` or lock |
+| Pi RPC field-name drift      | `PiRpcError` raised            | Per-command regression tests          |
+
+**Detail:**
+
+- *Pi process fails to start.* `PiRpcClient.start()` raises
+  `PiRpcProcessError` with the captured stderr; callers should validate
+  the `PI_CLI` path before reaching this point.
+- *Invalid manifest.* The TS shim throws during extension load and pi
+  surfaces the error. Mitigation is to pin `MANIFEST_PROTOCOL_VERSION` on
+  both sides so drift is caught at the handshake.
+- *Python tool raises.* Bridge returns `success: false`; shim raises; pi
+  records a tool failure in the agent loop. Add an app-level error policy
+  - observability layer.
+- *Bridge unreachable.* Shim connection error; the tool call fails. The
+  server is started before pi launches; readiness is implicit (bound
+  socket).
+- *RPC JSON parse error.* `StrictJsonlDecoder` raises with a preview of
+  the offending bytes. Mitigations: LF-only framing on both sides; a
+  bounded buffer (16 MB) prevents memory exhaustion on unterminated
+  frames.
+- *Pi aborts tool call.* The shim destroys the bridge socket; the
+  server's `watch_disconnect` task sets `ctx.cancelled`. Long-running
+  Python tools must check the flag.
+- *Concurrent mutation conflict.* Race possible if two parallel tools
+  touch shared state. Mark mutating tools `execution_mode="sequential"`
+  or implement per-resource locks.
+- *Pi RPC field-name drift.* Pi returns `success: false` and the client
+  raises `PiRpcError`. Add per-command regression tests (cf.
+  `tests/pi/test_set_model.py`).
 
 ## Roadmap
 
@@ -307,8 +333,7 @@ careful contracts around mutation timing.
 
 RPC already exposes `extension_ui_request` / `extension_ui_response`
 for dialogs. The harness already auto-handles these in headless mode.
-A richer UI bridge would let Python implement `select / input /
-confirm / editor` flows interactively — useful for non-pi UIs hosting
+A richer UI bridge would let Python implement `select / input / confirm / editor` flows interactively — useful for non-pi UIs hosting
 the harness. Beyond that, pi's TUI component factories are not RPC-
 accessible; a Python-first integration should render its own UI on
 top of the event stream rather than try to project pi's TUI.

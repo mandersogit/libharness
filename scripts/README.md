@@ -10,7 +10,7 @@ these scripts.
 
 ## What lives where
 
-```
+```text
 .sandbox/         created by these scripts
   nodeenv/        standalone Node LTS (via nodeenv)
   pi-install/     @earendil-works/pi-coding-agent npm package
@@ -38,23 +38,23 @@ touches your real `~/.pi/`. To clear, `rm` that file or use `/logout`.
 
 ## Individual scripts
 
-| Script             | Make target         | Purpose                                     |
-| ------------------ | ------------------- | ------------------------------------------- |
-| `setup-node.sh`    | (`install-pi`)      | nodeenv install of Node LTS                 |
-| `setup-pi.sh`      | (`install-pi`)      | npm install pi-coding-agent                 |
-| `pi.sh [args...]`  | `pi ARGS="..."`     | Sandboxed pi CLI                            |
-| `login.sh`         | `login`             | OAuth login flow (interactive)              |
-| `smoke-pi.sh`      | `smoke-pi`          | RPC `get_state` sanity check                |
-| `test.sh [args...]`| `test`/`test-live`  | pytest with `HOME`/`PI_CLI` wired           |
-| `clean.sh`         | `clean-sandbox`     | Remove `.sandbox/`                          |
+| Script              | Make target        | Purpose                           |
+| ------------------- | ------------------ | --------------------------------- |
+| `setup-node.sh`     | (`install-pi`)     | nodeenv install of Node LTS       |
+| `setup-pi.sh`       | (`install-pi`)     | npm install pi-coding-agent       |
+| `pi.sh [args...]`   | `pi ARGS="..."`    | Sandboxed pi CLI                  |
+| `login.sh`          | `login`            | OAuth login flow (interactive)    |
+| `smoke-pi.sh`       | `smoke-pi`         | RPC `get_state` sanity check      |
+| `test.sh [args...]` | `test`/`test-live` | pytest with `HOME`/`PI_CLI` wired |
+| `clean.sh`          | `clean-sandbox`    | Remove `.sandbox/`                |
 
 ## Common overrides
 
-| Env var          | Default     | Used by                       |
-| ---------------- | ----------- | ----------------------------- |
-| `PI_PKG_VERSION` | `0.74.0`    | `setup-pi.sh`                 |
-| `NODE_CHANNEL`   | `lts`       | `setup-node.sh`               |
-| `PI_OFFLINE`     | `1`         | `pi.sh`, `test.sh`            |
+| Env var          | Default  | Used by            |
+| ---------------- | -------- | ------------------ |
+| `PI_PKG_VERSION` | `0.74.0` | `setup-pi.sh`      |
+| `NODE_CHANNEL`   | `lts`    | `setup-node.sh`    |
+| `PI_OFFLINE`     | `1`      | `pi.sh`, `test.sh` |
 
 ## Sandboxing model
 
