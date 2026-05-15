@@ -1,0 +1,54 @@
+repo: .
+
+commits:
+  - message: |
+      chore: initial scaffold
+
+      Project setup for libharness: a Python-first harness around the Pi
+      agent harness. Source of design and known issues to fix lives in
+      dev-notes/, carried over from a sibling workspace that reviewed five
+      proof-of-concept implementations of the same idea.
+
+      Toolchain matches the not-pi-2 / simple-harness pattern:
+      - Makefile is the primary user surface (make help)
+      - local.venv/ from /opt/miniforge 3.11 (managed by `make install`)
+      - .sandbox/ holds the Node + pi install (managed by `make install-pi`,
+        which calls into scripts/)
+      - setuptools build, py>=3.11
+      - ruff (line 100, target py311) + mypy strict + pyright basic
+      - pytest + pytest-asyncio + pytest-cov + hypothesis
+      - `live` pytest marker for tests that need the sandboxed pi install
+
+      No implementation yet beyond an empty package and a scaffold smoke
+      test. `make all` passes: ruff clean, mypy + pyright clean, 1 pytest
+      passing.
+
+      Conventions in CLAUDE.md; next-action handoff in
+      dev-notes/SESSION-STATE.md (P1 is porting v5 verbatim into
+      libharness.pi). Commits go through the commit-plans skill.
+    files:
+      - .gitignore
+      - CLAUDE.md
+      - LICENSE
+      - Makefile
+      - README.md
+      - pyproject.toml
+      - src/libharness/__init__.py
+      - src/libharness/py.typed
+      - tests/test_scaffold.py
+      - scripts/README.md
+      - scripts/clean.sh
+      - scripts/lib/env.sh
+      - scripts/login.sh
+      - scripts/pi.sh
+      - scripts/setup-node.sh
+      - scripts/setup-pi.sh
+      - scripts/smoke-pi.sh
+      - scripts/test.sh
+      - docs/DESIGN.md
+      - dev-notes/README.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/.gitkeep
+      - dev-notes/commit-plans/2026-05-14-initial-scaffold.yaml
+      - dev-notes/2026-05-14-pi-python-harness-version-review.md
+      - dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md
