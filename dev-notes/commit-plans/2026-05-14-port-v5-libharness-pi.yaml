@@ -1,0 +1,60 @@
+repo: .
+
+commits:
+  - message: |
+      feat(pi): port v5 source as libharness.pi subpackage
+
+      Ports the v5 synthesis implementation (reviewed in
+      dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md) into
+      `src/libharness/pi/`. Chosen as a subpackage rather than at the top
+      level so future non-pi harnesses get their own sibling namespace.
+      Generalization is deferred.
+
+      The port is semantically verbatim. The only deltas applied during
+      the port are minimal lint/type fixes needed to keep `make all`
+      green under the project's ruff + mypy strict + pyright basic
+      toolchain:
+
+        - server.py: AbstractServer -> Server (concrete type has
+          .sockets); typed __aexit__ params as `object`.
+        - tools.py: narrowed is_dataclass via not isinstance(value, type)
+          before asdict; removed stale comparison-overlap type:ignore.
+        - rpc.py: try/except/pass -> contextlib.suppress(ValueError).
+        - Ruff autofix for quoted self-types, sorted imports, unused
+          AsyncIterator import.
+
+      No behavior changes. The set_model bug flagged in the v5 review
+      (sends `model` instead of `modelId`) is intentionally still there
+      — fixing it is the next commit so the diff stands on its own.
+
+      Tests port verbatim with import rename pi_python_harness -> libharness.pi
+      and a `@pytest.mark.live` decorator on test_real_pi_integration so
+      `make test` excludes it by default.
+
+      `make all` clean: ruff, mypy strict, pyright basic, 6 pytests pass.
+      `make test-live` confirms the integration test passes against
+      sandboxed pi v0.74.0.
+    files:
+      - src/libharness/pi/__init__.py
+      - src/libharness/pi/harness.py
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/server.py
+      - src/libharness/pi/tools.py
+      - src/libharness/pi/shim.py
+      - src/libharness/pi/jsonl.py
+      - src/libharness/pi/py.typed
+      - tests/pi/__init__.py
+      - tests/pi/fake_pi_rpc.py
+      - tests/pi/test_jsonl.py
+      - tests/pi/test_tools.py
+      - tests/pi/test_server.py
+      - tests/pi/test_rpc_fake.py
+      - tests/pi/test_real_pi_integration.py
+    deleted:
+      - tests/test_scaffold.py
+
+  - message: |
+      docs: session state + commit plan for v5 port
+    files:
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-14-port-v5-libharness-pi.yaml
