@@ -1,4 +1,7 @@
-.PHONY: help install install-pi bootstrap login pi smoke-pi test test-live lint lint-fix typecheck typecheck-mypy typecheck-pyright format all clean clean-sandbox clean-all
+.PHONY: help install install-pi bootstrap login pi smoke-pi test test-live \
+        lint lint-fix typecheck typecheck-mypy typecheck-pyright format \
+        lint-md lint-md-tables format-md format-md-check \
+        all clean clean-sandbox clean-all
 
 PYTHON_311 := /opt/miniforge/envs/base-py3-11/bin/python3.11
 VENV := local.venv
@@ -7,6 +10,19 @@ VENV_PYTEST := $(VENV)/bin/pytest
 VENV_RUFF := $(VENV)/bin/ruff
 VENV_MYPY := $(VENV)/bin/mypy
 VENV_PYRIGHT := $(VENV)/bin/pyright
+
+# Markdown toolchain: mdformat (Python, in the dev venv) for formatting;
+# markdownlint-cli2 (Node, in /opt/miniforge/envs/dev-tools/) for linting.
+# Explicit absolute paths for both — see CLAUDE.md "explicit tool paths".
+# `dev-tools` is a Node-only conda env; never reference it as a Python source.
+NODE              := /opt/miniforge/envs/dev-tools/bin/node
+MARKDOWNLINT_CLI2 := /opt/miniforge/envs/dev-tools/bin/markdownlint-cli2
+TABLE_MAX_COLS    := 150
+
+# Markdown discovery: filesystem walk of these roots plus any *.md at the
+# project root. Not git-aware on purpose — works in fresh checkouts.
+MD_PATHS := docs dev-notes scripts
+MD_FILES := $$(find $(MD_PATHS) -name '*.md' 2>/dev/null) $(wildcard *.md)
 
 help:
 	@echo "libharness targets:"
@@ -27,12 +43,18 @@ help:
 	@echo "    test            — pytest, excluding live marker"
 	@echo "    test-live       — pytest with live marker (requires pi + auth)"
 	@echo ""
-	@echo "  Quality:"
+	@echo "  Quality (code):"
 	@echo "    lint            — ruff check"
 	@echo "    lint-fix        — ruff check --fix"
 	@echo "    typecheck       — mypy + pyright"
 	@echo "    format          — ruff format"
 	@echo "    all             — lint + typecheck + test"
+	@echo ""
+	@echo "  Quality (markdown — run on demand, not part of \`all\`):"
+	@echo "    lint-md         — markdownlint-cli2 + table-line-length check"
+	@echo "    lint-md-tables  — table-line-length check only (the 150-col rule)"
+	@echo "    format-md       — mdformat --wrap keep on all discovered .md files"
+	@echo "    format-md-check — mdformat --check (CI-style)"
 	@echo ""
 	@echo "  Cleanup:"
 	@echo "    clean           — remove Python build/cache artifacts"
@@ -85,6 +107,47 @@ typecheck-pyright:
 
 format:
 	$(VENV_RUFF) format src/ tests/
+
+# --- markdown ---------------------------------------------------------------
+#
+# Per-file workflow recommended for live edits (see CLAUDE.md):
+#   $(VENV_PY) -m mdformat --wrap keep <FILE>
+#   $(NODE) $(MARKDOWNLINT_CLI2) <FILE>
+#
+# The Make targets below are the occasional-batch counterpart. They are
+# NOT part of `make all` so the default dev loop stays fast.
+
+# 150-column-on-tables check: markdownlint's MD013 has only one line_length
+# setting, so we can't enforce a length on tables while leaving prose alone.
+# This awk pass flags any line whose first non-whitespace character is `|`
+# (i.e. table rows, headers, separators).
+lint-md-tables:
+	@awk -v max=$(TABLE_MAX_COLS) ' \
+	    /^[[:space:]]*\|/ { \
+	        if (length > max) { \
+	            printf "%s:%d:%d error table-line-length (actual: %d, max: %d)\n", \
+	                FILENAME, FNR, max+1, length, max; \
+	            failed = 1 \
+	        } \
+	    } \
+	    END { exit failed }' $(MD_FILES)
+
+lint-md:
+	@test -x $(MARKDOWNLINT_CLI2) || { \
+	    echo "markdownlint-cli2 not found at $(MARKDOWNLINT_CLI2)" >&2; \
+	    echo "fix: conda create -n dev-tools -c conda-forge nodejs markdownlint-cli2" >&2; \
+	    exit 127; }
+	@test -x $(NODE) || { \
+	    echo "node not found at $(NODE)" >&2; \
+	    exit 127; }
+	$(NODE) $(MARKDOWNLINT_CLI2) $(MD_FILES)
+	@$(MAKE) --no-print-directory lint-md-tables
+
+format-md:
+	$(VENV_PY) -m mdformat --wrap keep $(MD_FILES)
+
+format-md-check:
+	$(VENV_PY) -m mdformat --wrap keep --check $(MD_FILES)
 
 all: lint typecheck test
 

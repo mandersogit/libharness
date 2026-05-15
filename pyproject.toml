@@ -34,6 +34,20 @@ dev = [
   "pyright>=1.1",
   "ruff>=0.3",
   "hypothesis>=6.0",
+  # Markdown formatter for `make format-md`. `mdformat-gfm` teaches mdformat
+  # about GitHub-Flavored Markdown (prerequisite for `mdformat-tables`,
+  # which aligns GFM table column widths). `mdformat-frontmatter` preserves
+  # the YAML frontmatter blocks dev-notes/ files use (without it, the
+  # leading `---` gets mangled into a horizontal rule).
+  #
+  # `markdownlint-cli2` is intentionally NOT here — it's a Node tool sourced
+  # from /opt/miniforge/envs/dev-tools/ via explicit absolute paths in the
+  # Makefile (NODE / MARKDOWNLINT_CLI2). Do not reference that env as a
+  # Python interpreter.
+  "mdformat>=0.7",
+  "mdformat-gfm>=0.4",
+  "mdformat-tables>=1.0",
+  "mdformat-frontmatter>=2.0",
 ]
 
 [tool.setuptools.packages.find]

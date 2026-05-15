@@ -1,0 +1,77 @@
+repo: .
+
+commits:
+  - message: |
+      build: markdown toolchain (mdformat + markdownlint-cli2)
+
+      Inherits the markdown workflow from hildy / not-pi-2 / simple-harness
+      (see memories of those projects on spark):
+
+        - mdformat (Python, via the dev venv) with gfm + tables +
+          frontmatter plugins for `make format-md` / `format-md-check`.
+        - markdownlint-cli2 (Node, in /opt/miniforge/envs/dev-tools/)
+          for `make lint-md`. Invoked via explicit absolute paths
+          (no $PATH lookup, no `conda activate` required).
+        - A tiny awk pass enforces the 150-column-on-tables rule
+          (`lint-md-tables`) — markdownlint's MD013 can't selectively
+          target tables.
+        - `.markdownlint.json` matches hildy's: MD013/24/33/41 off.
+
+      Markdown targets are intentionally NOT in `make all` — the default
+      dev loop stays code-only. They're run on demand or via the per-file
+      workflow now documented in CLAUDE.md.
+
+      CLAUDE.md picks up three sections:
+        - Explicit tool paths (lists the specific non-apt binaries here)
+        - Per-file markdown workflow (mdformat then markdownlint-cli2,
+          on the single file you just edited)
+        - Sidecar pattern for wide tables (never drop the table; push
+          overflow detail to a `**Detail:**` list below)
+
+      Setup: `conda create -n dev-tools -c conda-forge nodejs markdownlint-cli2`
+      (one-time, per machine).
+    files:
+      - pyproject.toml
+      - Makefile
+      - .markdownlint.json
+      - CLAUDE.md
+      - dev-notes/commit-plans/2026-05-14-markdown-toolchain.yaml
+
+  - message: |
+      docs: markdown cleanup pass (format-md + sidecar restructuring)
+
+      Runs `make format-md` over all *.md files, then resolves
+      `make lint-md` errors:
+
+        - Code fences without a language → tagged ``` ```text ```` ``` for
+          tree diagrams.
+        - Wide tables (>150 cols) restructured via the sidecar pattern
+          (per CLAUDE.md):
+          - `dev-notes/2026-05-14-pi-python-harness-version-review.md`:
+            the 5-column v1..v4 side-by-side compressed to short cells
+            with a `**Detail:**` list below carrying the original prose.
+          - `dev-notes/2026-05-14-event-bridge-proposal.md`:
+            decision-events table cells shortened; `session_before_*`
+            collapsed into one row with a sidecar entry enumerating the
+            four sub-events.
+          - `docs/DESIGN.md`: failure-modes table shrunk to
+            short-phrase cells with `**Detail:**` list.
+
+      No content changes — every fact and source-line citation is
+      preserved. mdformat also normalized list numbering, list ordering,
+      and a handful of trivial whitespace differences.
+
+      `make lint-md` clean (0 errors across 10 files). `make all` still
+      clean.
+
+      SESSION-STATE bumped to note the toolchain landing and the
+      sidecar restructuring.
+    files:
+      - dev-notes/2026-05-14-event-bridge-proposal.md
+      - dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md
+      - dev-notes/2026-05-14-pi-python-harness-version-review.md
+      - dev-notes/README.md
+      - dev-notes/SESSION-STATE.md
+      - docs/DESIGN.md
+      - README.md
+      - scripts/README.md

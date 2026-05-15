@@ -49,7 +49,7 @@ shell scripts in `scripts/` are the implementation it calls into.
 
 ## Architecture sketch
 
-```
+```text
 Python app
   ├─ ToolRegistry (decorators, JSON Schema from type hints)
   ├─ PythonToolServer (local JSONL bridge, token-protected)
@@ -90,6 +90,31 @@ All commits go through the **commit-plans** skill. Do not use `git add`,
 (`git status`, `git log`, `git diff`) are always fine. Commit plans live
 in `dev-notes/commit-plans/`.
 
+## Explicit tool paths
+
+For any tool not installed by `apt`/`dnf`, invoke by absolute path. Never
+rely on `$PATH` for non-system tools. This includes anything in a venv
+(`./local.venv/bin/*`), anything in a conda env
+(`/opt/miniforge/envs/*/bin/*`), or anything installed via `pipx`/`npm`/
+`cargo`/`go`. OK to rely on `$PATH` for `bash`, `git`, `make`, `find`,
+`grep`, `sed`, `awk`, `curl`, etc.
+
+For tools that internally shebang to a sub-interpreter (e.g.
+`markdownlint-cli2` is a Node script with `#!/usr/bin/env node`), call the
+interpreter explicitly too: `$(NODE) $(MARKDOWNLINT_CLI2) <args>`. The
+Makefile pre-flights the paths and fails loudly with the missing path in
+the error message.
+
+Specific non-apt tools used here:
+
+- `./local.venv/bin/python` — 3.11 dev venv (managed by `make install`)
+- `/opt/miniforge/envs/dev-tools/bin/node` — Node interpreter (for
+  markdownlint-cli2)
+- `/opt/miniforge/envs/dev-tools/bin/markdownlint-cli2` — Node script
+- `.sandbox/nodeenv/bin/node` — sandboxed Node for pi (separate from
+  dev-tools)
+- `.sandbox/pi-install/.../cli.js` — pi CLI
+
 ## Markdown authoring
 
 All markdown files in `dev-notes/` must have YAML frontmatter:
@@ -101,4 +126,45 @@ created: "2026-05-14"
 ---
 ```
 
-Tables under 150 columns. Paragraph text not line-wrapped.
+**Per-file workflow.** After editing **any** markdown file, run these two
+commands on that single file before considering the edit done:
+
+```bash
+./local.venv/bin/python -m mdformat --wrap keep <FILE>
+/opt/miniforge/envs/dev-tools/bin/node /opt/miniforge/envs/dev-tools/bin/markdownlint-cli2 <FILE>
+```
+
+Tight feedback loop: mdformat reflows tables and lists once; markdownlint
+catches the 150-column-on-tables rule while you remember the structure.
+`make format-md` / `make lint-md` exist for batch use but are NOT in
+`make all` (so the default dev loop stays fast).
+
+**Paragraph wrapping.** Do **not** line-wrap prose. mdformat's
+`--wrap keep` preserves single-long-line paragraphs; if you wrap, every
+re-edit will fight you. Long lines in prose are fine.
+
+**Tables stay under 150 source columns.** When a table exceeds 150
+columns, do **not** drop the table, drop columns, or aggressively
+abbreviate cells. Use the **sidecar pattern**: keep the table compact
+(short cells) and put a `**Detail:**` list immediately below that
+elaborates each row. The table stays scannable; the list carries the
+depth. Example:
+
+```markdown
+| Feature       | Owner | Status      |
+| ------------- | ----- | ----------- |
+| Auth rewrite  | alice | in progress |
+| Cache rewrite | bob   | blocked     |
+
+**Detail:**
+
+- *Auth rewrite:* originally scoped for Q1; slipped because the SSO
+  vendor's webhook contract changed mid-flight. Targeted for unblock
+  by 2026-06-01.
+- *Cache rewrite:* blocked on the auth rewrite completing first.
+```
+
+When in doubt: shorten cell headers first (`Description` → `Notes`), then
+unambiguously shorten cell values (`sequential` → `seq` is fine;
+`lifecycle method` → `hook` is not — the abbreviation loses information),
+then fall back to the sidecar.
