@@ -1,0 +1,34 @@
+repo: .
+
+commits:
+  - message: |
+      docs: concurrency-model discussion + fresh-session handoff
+
+      Two related docs land together so the project state at this commit
+      is a clean handoff point for a fresh Claude Code session in this
+      repo.
+
+      New: dev-notes/2026-05-15-concurrency-model-discussion.md (status
+      "In co-design"). Open question: should libharness stay asyncio or
+      move to threads (matching hildy / simple-harness / not-pi-2), and
+      should freethreaded Python 3.14t be a supported runtime. Four
+      options laid out with a trade-off matrix; family precedent and
+      the Agent.on_* hooks design intent both point to threads.
+      Recommendation: C+D (threads on standard 3.11+, freethreaded
+      3.14t as opt-in runtime), high confidence. Awaiting sign-off on
+      §"Decision points"; no implementation until then.
+
+      Refreshed: dev-notes/SESSION-STATE.md. Now leads with a
+      "Fresh-session quickstart" section that explicitly orders the
+      reading sequence (this file → DESIGN.md → the two open co-design
+      proposals, concurrency first). Pending-tasks section flags the
+      two CO-DESIGN gates as blocking; deferring the
+      "expose pi-native session API" task until after the concurrency
+      decision so we don't write asyncio wrappers that get rewritten
+      next week. Commit list updated through 7f9c54e.
+
+      No code changes.
+    files:
+      - dev-notes/2026-05-15-concurrency-model-discussion.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-15-concurrency-model-doc-and-handoff.yaml
