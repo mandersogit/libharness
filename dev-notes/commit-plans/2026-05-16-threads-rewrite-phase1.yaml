@@ -1,0 +1,61 @@
+repo: .
+
+commits:
+  - message: |
+      feat(threads-rewrite): phase 1 — tools.py thread-safety + test infra
+
+      Phase 1 of the asyncio→threads rewrite. **Additive only** — no signature
+      changes to ``ctx.update`` or ``collect_tool_result``, no async-tool
+      rejection at registration. Those deferred to phase 3/4 because the
+      still-asyncio server.py / rpc.py / harness.py and the existing async-tool
+      tests would break.
+
+      Per-phase greenness preserved: 33/33 tests pass on both local.venv
+      (3.11) and local-ft.venv (3.14t). Lint + mypy + pyright clean.
+      Six consecutive runs, zero flakes.
+
+      Changes:
+        - tools.py:
+          * threading.Lock (_lock) guards register/get/__contains__/__iter__/
+            manifest/snapshot. Atomic check-and-insert on registration.
+            __iter__ snapshots under lock and releases before iteration
+            (prevents deadlock if handler re-enters during iteration).
+          * New ImmutableRegistry class — read-only snapshot via deepcopy of
+            metadata. Preserves func reference (deepcopying callable instances
+            with threading.Lock fails: "cannot pickle '_thread.lock' object").
+          * New ToolRegistry.snapshot() -> ImmutableRegistry.
+          * ToolContext._cancelled accepts asyncio.Event | threading.Event
+            (dual-event support for phase-2/3 swap-in).
+          * ToolSpec.to_manifest() now deepcopies parameters (was returning
+            by reference, which leaked into snapshot — caught by all 3
+            phase-1 reviewers).
+        - pyproject.toml: added pytest-timeout>=2.0 for hang-canary safety.
+        - test_runtime_meta.py (new): 3.11-safe runtime artifact via
+          getattr(sys, "_is_gil_enabled", lambda: True)(). Writes to
+          .pytest-runtime-meta/<tag>.json; CI comparison in phase 4.
+        - test_async_contract_guard.py (new): AST walker scoped to phase-1
+          files. Replaces v3 plan's Makefile grep. Scope widens at each phase.
+        - test_tools.py: extended from 2 → 16 tests. New coverage includes
+          dual-event cancellation, snapshot isolation/manifest-copy/
+          callable-with-lock, immutable-registry surface, __iter__
+          point-in-time, FT-targeted concurrent register/snapshot/manifest
+          stress, defensive-manifest-copy regression.
+        - dev-notes/rewrite-bisect-baseline.md (new): seeded with initial
+          row (current main HEAD, 14-test pre-rewrite count, sha256 of
+          sorted nodeids). Phase commits will append.
+
+      Per the per-phase-greenness loop: implement → summary → codex test
+      plan → tests → 3-reviewer adversarial review → fix → commit. This
+      commit lands after all three reviewers found their findings addressed.
+
+      See dev-notes/2026-05-16-threads-rewrite-phase1-handoff.md for full
+      phase-1 state, decisions, and pickup instructions for phase 2.
+    files:
+      - src/libharness/pi/tools.py
+      - pyproject.toml
+      - tests/pi/test_tools.py
+      - tests/pi/test_runtime_meta.py
+      - tests/pi/test_async_contract_guard.py
+      - dev-notes/rewrite-bisect-baseline.md
+      - dev-notes/2026-05-16-threads-rewrite-phase1-handoff.md
+      - dev-notes/commit-plans/2026-05-16-threads-rewrite-phase1.yaml

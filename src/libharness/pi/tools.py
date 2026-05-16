@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import inspect
 import json
 import re
+import threading
 import traceback
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -63,13 +65,19 @@ class ToolResult:
 
 @dataclass(slots=True)
 class ToolContext:
-    """Execution context passed to Python tools that request it."""
+    """Execution context passed to Python tools that request it.
+
+    ``_cancelled`` accepts either ``asyncio.Event`` (current async server) or
+    ``threading.Event`` (post-phase-2 threaded server). Both expose ``.is_set()``;
+    the duck-typed Union lets phase 1 land the threading.Event support without
+    breaking the existing async server. Phase 3 narrows this to threading.Event.
+    """
 
     tool_call_id: str
     tool_name: str
     cwd: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    _cancelled: asyncio.Event | None = None
+    _cancelled: asyncio.Event | threading.Event | None = None
     _update_callback: Callable[[ToolResult | Mapping[str, Any] | str], Any] | None = None
 
     @property
@@ -110,11 +118,15 @@ class ToolSpec:
     execution_mode: Literal["sequential", "parallel"] | None = None
 
     def to_manifest(self) -> dict[str, Any]:
+        # Defensive copy of ``parameters``: ``to_manifest`` results are used by
+        # external code (shim, snapshot.manifest()) which expects to be able to
+        # treat them as data. Returning a reference would let a mutation in one
+        # consumer leak into others — and into the ImmutableRegistry snapshot.
         out: dict[str, Any] = {
             "name": self.name,
             "label": self.label or self.name,
             "description": self.description,
-            "parameters": self.parameters,
+            "parameters": copy.deepcopy(self.parameters),
         }
         if self.prompt_snippet:
             out["promptSnippet"] = self.prompt_snippet
@@ -142,16 +154,83 @@ class RegisteredTool:
         return self.func(**kwargs)
 
 
+class ImmutableRegistry:
+    """Immutable view of a ToolRegistry, captured by ``ToolRegistry.snapshot()``.
+
+    The snapshot copies the registered-tools dict at construction time, so later
+    mutations to the source ``ToolRegistry`` are invisible to this view. Used by
+    ``PythonToolServer`` (post-phase-2) to bind the server lifecycle to a frozen
+    tool set without mutating caller-owned state.
+    """
+
+    __slots__ = ("_tools",)
+
+    _tools: dict[str, RegisteredTool]
+
+    def __init__(self, tools: Mapping[str, RegisteredTool]) -> None:
+        # Deep-copy metadata only, NOT ``func``. Tool functions may be callable
+        # instances holding ``threading.Lock`` or other un-deepcopyable state
+        # (verified: deepcopying a tool with a lock raises TypeError("cannot
+        # pickle '_thread.lock' object")). Rebuild each RegisteredTool with:
+        # - a fresh ``spec`` whose ``parameters`` dict is deepcopied;
+        # - the original ``func`` reference (functions are stateless from the
+        #   registry's POV; the snapshot doesn't own them).
+        frozen: dict[str, RegisteredTool] = {}
+        for name, registered in tools.items():
+            new_spec = dataclasses.replace(
+                registered.spec,
+                parameters=copy.deepcopy(registered.spec.parameters),
+                prompt_guidelines=registered.spec.prompt_guidelines,  # tuple is immutable
+            )
+            frozen[name] = RegisteredTool(
+                spec=new_spec,
+                func=registered.func,
+                pass_context=registered.pass_context,
+                context_param=registered.context_param,
+            )
+        self._tools = frozen
+
+    def get(self, name: str) -> RegisteredTool:
+        try:
+            return self._tools[name]
+        except KeyError as exc:
+            raise ToolError(f"unknown tool {name!r}") from exc
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._tools
+
+    def __iter__(self) -> Iterator[RegisteredTool]:
+        return iter(self._tools.values())
+
+    def __len__(self) -> int:
+        return len(self._tools)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "protocolVersion": MANIFEST_PROTOCOL_VERSION,
+            "tools": [registered.spec.to_manifest() for registered in self._tools.values()],
+        }
+
+
 class ToolRegistry:
     """Register Python callables as Pi tools.
 
     The registry supports both explicit JSON Schema and conservative schema
     inference from Python type annotations. Explicit schema is recommended for
     externally exposed tools; inference is useful for local/internal workflows.
+
+    Thread-safe under freethreaded CPython (3.14t) and standard CPython (3.11):
+    register/get/contains/iter/manifest/snapshot are guarded by an internal
+    ``threading.Lock``. The lock protects only the ``_tools`` dict mutations
+    and lookups; the unlocked phase of ``register()`` (signature inspection,
+    schema inference, ``RegisteredTool`` construction) happens before the lock
+    is acquired, so the locked critical section is the final atomic check-and-
+    insert only.
     """
 
     def __init__(self) -> None:
         self._tools: dict[str, RegisteredTool] = {}
+        self._lock = threading.Lock()
 
     def register(
         self,
@@ -169,8 +248,6 @@ class ToolRegistry:
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             tool_name = name or fn.__name__
             _validate_name(tool_name)
-            if tool_name in self._tools:
-                raise ToolError(f"tool {tool_name!r} already registered")
 
             doc = inspect.getdoc(fn) or ""
             desc = description or doc.split("\n", 1)[0] or tool_name
@@ -187,7 +264,11 @@ class ToolRegistry:
                 prompt_guidelines=tuple(prompt_guidelines or ()),
                 execution_mode=execution_mode,
             )
-            self._tools[tool_name] = RegisteredTool(spec=spec, func=fn, pass_context=effective_pass_context, context_param=ctx_param)
+            registered = RegisteredTool(spec=spec, func=fn, pass_context=effective_pass_context, context_param=ctx_param)
+            with self._lock:
+                if tool_name in self._tools:
+                    raise ToolError(f"tool {tool_name!r} already registered")
+                self._tools[tool_name] = registered
             return fn
 
         if func is None:
@@ -197,22 +278,40 @@ class ToolRegistry:
     tool = register
 
     def get(self, name: str) -> RegisteredTool:
-        try:
-            return self._tools[name]
-        except KeyError as exc:
-            raise ToolError(f"unknown tool {name!r}") from exc
+        with self._lock:
+            try:
+                return self._tools[name]
+            except KeyError as exc:
+                raise ToolError(f"unknown tool {name!r}") from exc
 
     def __contains__(self, name: str) -> bool:
-        return name in self._tools
+        with self._lock:
+            return name in self._tools
 
     def __iter__(self) -> Iterator[RegisteredTool]:
-        return iter(self._tools.values())
+        # Snapshot under lock; iterate without holding the lock so handlers
+        # invoked during iteration cannot deadlock by re-entering register().
+        with self._lock:
+            snapshot = list(self._tools.values())
+        return iter(snapshot)
 
     def manifest(self) -> dict[str, Any]:
+        with self._lock:
+            tools = list(self._tools.values())
         return {
             "protocolVersion": MANIFEST_PROTOCOL_VERSION,
-            "tools": [registered.spec.to_manifest() for registered in self._tools.values()],
+            "tools": [registered.spec.to_manifest() for registered in tools],
         }
+
+    def snapshot(self) -> ImmutableRegistry:
+        """Return an immutable view of the current registry contents.
+
+        Used by ``PythonToolServer`` to bind the server lifecycle to a frozen
+        tool set captured at server-start time. Subsequent ``register()`` calls
+        on this registry do not affect the snapshot or any server holding it.
+        """
+        with self._lock:
+            return ImmutableRegistry(self._tools)
 
 
 def normalize_tool_value(value: Any) -> ToolResult:

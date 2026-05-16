@@ -30,6 +30,10 @@ dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4.0",
+  # `pytest-timeout` bounds hang-canary tests (lifecycle, reentrant dispatch,
+  # helper-thread bypass). Added in the threads-rewrite phase 1; bypassing
+  # broken contracts here would silently hang the whole suite.
+  "pytest-timeout>=2.0",
   "mypy>=1.8",
   "pyright>=1.1",
   "ruff>=0.3",
