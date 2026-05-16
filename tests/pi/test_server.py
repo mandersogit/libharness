@@ -817,9 +817,11 @@ def test_thread_start_failure_releases_slot_active_entry_and_request(
 
     registry = ToolRegistry()
     real_start = threading.Thread.start
+    fired_event = threading.Event()
 
     def failing_start(self: threading.Thread) -> None:
         if self.name == "bridge-handler":
+            fired_event.set()
             raise RuntimeError("simulated start failure")
         real_start(self)
 
@@ -827,26 +829,33 @@ def test_thread_start_failure_releases_slot_active_entry_and_request(
 
     with _started_server(registry) as server:
         slot_count_before = server._handler_slots._value  # type: ignore[attr-defined]
-        # Trigger an accept that will spawn-and-fail.
-        with contextlib.suppress(OSError):
-            sock = socket.create_connection(
-                (server.endpoint.host, server.endpoint.port), timeout=2.0,
-            )
-            try:
-                sock.sendall(b"")  # noqa: PIE790 — flush the connect
-            finally:
+        # Trigger the accept loop. Open the connection and poll until the
+        # failure branch fires (avoids race where the server hasn't yet
+        # accepted by the time we check).
+        sock = socket.create_connection(
+            (server.endpoint.host, server.endpoint.port), timeout=2.0,
+        )
+        try:
+            # Send some bytes to force the accept and ensure the server starts
+            # processing the connection.
+            with contextlib.suppress(OSError):
+                sock.sendall(b'{"id":"x","type":"manifest","token":"x"}\n')
+            # The failure branch must fire within a reasonable time.
+            assert fired_event.wait(3.0), "Thread.start failure branch never fired"
+        finally:
+            with contextlib.suppress(OSError):
                 sock.close()
-        # Give the server thread a moment to process the rejected accept.
+        # After the failure, wait for the slot to be released.
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
-            with server._handler_threads_lock:
-                if not server._active_handler_threads:
-                    break
+            if server._handler_slots._value == slot_count_before:  # type: ignore[attr-defined]
+                break
             time.sleep(0.01)
         with server._handler_threads_lock:
             assert not server._active_handler_threads
-        # Slot was released; counter is back to baseline.
-        assert server._handler_slots._value == slot_count_before  # type: ignore[attr-defined]
+        assert server._handler_slots._value == slot_count_before, (  # type: ignore[attr-defined]
+            f"slot leaked: baseline={slot_count_before}, after={server._handler_slots._value}"  # type: ignore[attr-defined]
+        )
 
 
 def test_live_registry_metadata_mutation_after_start_does_not_affect_manifest_snapshot() -> None:

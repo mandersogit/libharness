@@ -1,0 +1,78 @@
+commits:
+  - message: |
+      docs(threads-rewrite): phase 4 design v2 + 3-reviewer design synthesis
+
+      Phase 4 (harness.py rewrite + async-shim removal) is design-only — no
+      implementation yet, per the handoff doc's recommendation to pause
+      after phase 3 and do a focused design review before writing code.
+
+      v1 of the design doc (committed with phase 3 at `6c5a809`) went
+      through 3 adversarial reviewers (2 codex gpt-5.5 xhigh + 1 Opus).
+      All three said "not ready as an implementation contract." Synthesis
+      at ``dev-notes/2026-05-16-threads-rewrite-phase4-design-review-synthesis.md``
+      consolidates findings: 3 CRITICAL (asyncio.CancelledError MRO fact-
+      error that would re-introduce phase 2 F1; `_start_complete` set-once
+      contract unspecified → close-during-start deadlock; `_cleanup()`
+      called by both `start()` except + `close()` arm with no ownership
+      rule → racy mutation on FT); 4 HIGH (shim write has no unblock →
+      bounded-close claim broken; `_close_sync` interleaves unsafely with
+      mid-`_start_sync`; Makefile guard parses Markdown via shell tail/grep
+      → broken + can self-certify test deletion; in-tree `_*_sync` test
+      callers missed from rewrite scope). Plus 7 MODERATE (5-state
+      observability loss for aborted start, close-from-new not specified,
+      sync-gen decision contradicts itself, restart semantics inconsistent
+      across PiRpcClient/PythonToolServer/Harness, hidden async-app
+      breaking change, test enumeration too thin, bisect-baseline
+      substitution brittle).
+
+      v2 of the design doc addresses every Tier-1 and Tier-2 item:
+
+        - Keep the explicit ``except asyncio.CancelledError:`` arm (F1).
+        - Show the ``start()`` body skeleton with explicit
+          ``finally: _start_complete.set()`` on every exit path (F2).
+        - Single-owner cleanup: ``close()`` is the sole cleanup owner;
+          ``start()`` never calls ``_cleanup()``. Trade-off: resource leak
+          if caller catches start failure and never calls close, mitigated
+          by the documented ``with PiPythonHarness(...) as h:`` pattern (F3).
+        - Reorder cut points so non-unblockable steps (shim write, faux
+          write, tempdir) run BEFORE I/O-launching steps (server bind, pi
+          launch). Active-unblock list is non-empty exactly when partial
+          start has launched threads (F4).
+        - ``_active_unblock_start_in_progress`` calls
+          ``pi._force_terminate_subprocess`` (bounded SIGTERM/kill from
+          phase 3) NOT ``pi._close_sync`` — terminate doesn't mutate
+          PiRpcClient state, so the interleave with mid-`_start_sync` is
+          safe (F5).
+        - Replace shell Makefile parsing with a small Python guard script
+          (``scripts/check-bisect-baseline.py``) that parses TSV rows
+          robustly + enforces SHA match + count non-decrease +
+          PHASE*_PLACEHOLDER substitution (F6).
+        - Add ``tests/pi/test_rpc_fake.py``, ``test_server.py``,
+          ``test_set_model.py`` to the phase-4 rewrite scope; they all
+          call ``_*_sync`` methods directly today (F7).
+        - Pin abort-during-start exception type:
+          ``PiRpcProcessError("harness start aborted by concurrent close")``
+          (F8).
+        - Specify ``new → close() → closed`` transition explicitly (F9).
+        - Commit to drop sync generators at phase 4 (no deprecation
+          cycle) (F10).
+        - Apply single-use rule to PythonToolServer too (F11).
+        - Add async-app migration recipe to breaking-changes prose:
+          ``asyncio.to_thread`` for blocking client calls from event-loop
+          code (F12).
+        - Enumerate 17 lifecycle tests in a new ``tests/pi/test_lifecycle.py``
+          with injectable cut-point hook for deterministic close-during-
+          start tests (F13).
+
+      Approval gates updated for v2; a second adversarial-review pass is
+      planned before implementation begins.
+
+      Also folds in a small test-quality fix (``test_thread_start_failure_releases_slot_active_entry_and_request``
+      gained a ``fired_event`` deterministic check); landed mid-phase-3
+      development but missed the phase-3 commit.
+    files:
+      - dev-notes/2026-05-16-threads-rewrite-phase4-design.md
+      - dev-notes/2026-05-16-threads-rewrite-phase4-design-review-synthesis.md
+      - dev-notes/SESSION-STATE.md
+      - tests/pi/test_server.py
+      - dev-notes/commit-plans/2026-05-16-threads-rewrite-phase4-design.yaml
