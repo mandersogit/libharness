@@ -13,6 +13,8 @@ If you're a new session starting in `~/git/github/libharness`:
 
 1. **Read this file first** (you're doing it). Skim the rest of it once for context.
 1. **Then `docs/DESIGN.md`.** Architecture and the Resolved decisions table at the bottom — the concurrency-model decision (2026-05-15) is the most load-bearing entry for current work.
+1. **Ready for implementation (next milestone):**
+   - `dev-notes/2026-05-15-threads-rewrite-plan.md` — asyncio → threads rewrite of `src/libharness/pi/`. Four phases, ~1100 LOC, 10 enumerated regression tests. **Blocked on Agent-class co-design** (the `on_*` hook set); the plan prepares the dispatch mechanism but doesn't pick hook names.
 1. **The remaining open co-design proposal:**
    - `dev-notes/2026-05-14-event-bridge-proposal.md` — three approaches sketched (notify-only, full-roundtrip, hybrid). Now that concurrency is resolved (threads + FT-first), the protocol shape can be designed against sync hooks and `ctx.update`-style emission.
 1. **Resolved (historical reference):**
@@ -40,7 +42,7 @@ The library predecessor reviews in `dev-notes/2026-05-14-pi-python-harness-*-rev
 
 In priority order. The first task is now an implementation milestone (the concurrency decision has landed); the second remains a blocking co-design gate.
 
-- **Rewrite asyncio → threads (primarily D, compatible with C).** Decision recorded above. Scope: `src/libharness/pi/rpc_client.py`, `server.py`, `tools.py` registry/dispatch, the `PiPythonHarness` lifecycle, and the test suite that currently uses `pytest-asyncio`. Sync `def` for tool functions and `on_*` hooks; reject `async def` at decoration time (not-pi-2 pattern). Optimize hot paths (tool dispatch, bridge readers) for freethreading parallelism, but verify the same code runs correctly on the standard 3.11 GIL build via `make test-311`. Expected ~1 focused day of rewriting + regression debugging for cancellation/cleanup. Don't begin without re-aligning with the author on the Agent-class shape (the `on_*` hook set is still TBD — that's a follow-up co-design, see decision-points doc).
+- **Rewrite asyncio → threads (primarily D, compatible with C).** Decision recorded above. **Plan landed at `dev-notes/2026-05-15-threads-rewrite-plan.md`** (status "Ready for implementation"): 4-phase feature branch (`tools.py` → `server.py` → `rpc.py` → `harness.py`+cleanup), `ThreadingTCPServer` for the bridge, `subprocess.Popen` + reader threads for pi I/O, `dict[id, queue.Queue(maxsize=1)]` for RPC correlation, sidecar disconnect-watcher thread per execute, sync-only tool handlers (`ctx.update` is the one streaming mechanism; sync-gen dropped per v4 precedent), `async def` rejected at decoration. ~1100 LOC touched (~600 genuinely new). 10 concrete regression tests enumerated. **Blocked on Agent-class co-design** — the rewrite prepares the dispatch *mechanism* (single `_dispatch_event` site on the reader thread; write-back via `_send_lock`) but does not commit to specific `on_*` hook names; agree with the author on the Agent shape before starting.
 - **CO-DESIGN: Event bridge.** Doc at `dev-notes/2026-05-14-event-bridge-proposal.md`. Three approaches sketched; eight decision points enumerated. Now that concurrency is resolved, design against sync `on_*` hooks and synchronous `ctx.update(...)` emission rather than asyncio idioms.
 - **Expose pi-native session API as typed methods on `PiRpcClient`.** Decision recorded in `docs/DESIGN.md` § Resolved decisions: we use pi-native sessions, not a Python-side model. Methods to add as thin wrappers around `client.send({"type": "..."})`: `fork(entry_id)`, `clone()`, `switch_session(session_path)`, `get_session_stats()`, `export_html(output_path=...)`, `set_session_name(name)`, `get_fork_messages()`. Plus a `list_sessions(cwd, session_dir=...)` helper. Cost is ~100-150 lines + tests. **Land as part of (or after) the threaded rewrite** — these wrappers should be sync from the start, not asyncio code that gets rewritten immediately.
 - Command bridge, state bridge, UI bridge (after event bridge lands; see `docs/DESIGN.md` Roadmap).
@@ -49,6 +51,8 @@ In priority order. The first task is now an implementation milestone (the concur
 
 Commits, newest first:
 
+- `79aa613` — build: dual-venv scaffold + docs: concurrency-model decision.
+- `12aaf7b` — docs: vendor v1–v5 predecessors + sweep ~/Downloads citations.
 - `ad687a1` — docs: concurrency-model discussion + fresh-session handoff.
 - `7f9c54e` — docs: pi internals notes + record session-model intent.
 - `b4d2ccd` — feat(pi): manifest `protocolVersion` + shim handshake (P2).
@@ -60,7 +64,7 @@ Commits, newest first:
 
 Plus content/format cleanup commits between these by the author.
 
-**Uncommitted** at the time of this refresh: dual-venv scaffolding (Makefile splits install/lint/typecheck/test/all into `-311` and `-ft` variants; `scripts/lib/env.sh` gains `LIBHARNESS_VENV` override; `.gitignore` lists `local-ft.venv/`), the concurrency-model decision (frontmatter flip + Resolution section in the discussion doc; new row in `docs/DESIGN.md` Resolved decisions; this SESSION-STATE refresh), and ongoing edits to `dev-notes/2026-05-14-event-bridge-proposal.md`.
+`make test-live` validated on both venvs after `79aa613`: real pi + real LLM (gpt-5.5 via ChatGPT OAuth) green on 3.11 and 3.14t.
 
 ## Notes for the next session
 

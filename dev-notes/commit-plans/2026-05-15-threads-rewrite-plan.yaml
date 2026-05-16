@@ -1,0 +1,53 @@
+repo: .
+
+commits:
+  - message: |
+      docs: implementation plan for the asyncio → threads rewrite
+
+      Persists the rewrite plan as `dev-notes/2026-05-15-threads-rewrite-plan.md`
+      (status "Ready for implementation"), the next milestone per the
+      concurrency-model decision (commit 79aa613, primarily D + compatible
+      with C). Plan is blocked on the Agent-class co-design — the `on_*` hook
+      names are still TBD — but the dispatch mechanism (single
+      `_dispatch_event` site on the reader thread; write-back through
+      `_send_lock`) is fully specified.
+
+      Plan covers:
+        - **4-phase feature branch** (`tools.py` → `server.py` → `rpc.py` →
+          `harness.py` + cleanup), single branch, green only at the end.
+        - **Bridge server** rewritten to `socketserver.ThreadingTCPServer`
+          with `daemon_threads = True`; per-execute sidecar disconnect-
+          watcher thread for cancellation (preserves current cancellation
+          semantics: pi-side abort sets `ctx._cancelled`).
+        - **Subprocess I/O** via `subprocess.Popen` + two daemon reader
+          threads; `bufsize=0` + raw `os.read` on stdout fd to avoid
+          line-flush deadlock. Single `_send_lock` on stdin writes.
+        - **RPC correlation** via `dict[id, queue.Queue(maxsize=1)]`
+          (one-shot case; streaming exists only on the bridge channel).
+        - **Tool authoring** stays sync `def` + sync `ctx.update`. Drop
+          sync-gen tool path (v4 precedent); reject `async def` at
+          decoration time (not-pi-2 pattern).
+        - **Freethreading wins**: two grounded (parallel handler threads
+          under `executionMode: "parallel"`; concurrent stdout/bridge
+          readers). No FT-only code paths.
+        - **10 enumerated regression tests** covering bridge handler leak
+          on disconnect, external SIGKILL, concurrent execute requests,
+          long-running tool ignoring cancellation, etc.
+        - **Tradeoffs register** with rejected alternatives and rationale.
+        - **Critical files reading order** for whoever starts the
+          implementation.
+
+      Scope: ~1100 LOC touched, ~600 genuinely new across rpc/server/tools.
+
+      SESSION-STATE.md updates:
+        - Fresh-session quickstart gains a "Ready for implementation" entry
+          pointing at the plan.
+        - "Pending tasks" rewrite-asyncio-→-threads bullet replaced with a
+          plan-doc pointer and the gating note.
+        - Recent activity refreshed (12aaf7b + 79aa613) and the
+          uncommitted-state line replaced with a `make test-live`
+          validation note for both venvs.
+    files:
+      - dev-notes/2026-05-15-threads-rewrite-plan.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-15-threads-rewrite-plan.yaml
