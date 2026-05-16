@@ -48,6 +48,11 @@ dev = [
   "mdformat-gfm>=0.4",
   "mdformat-tables>=1.0",
   "mdformat-frontmatter>=2.0",
+  # `nodeenv` provisions the sandboxed Node interpreter used by `make
+  # install-pi` (see scripts/setup-node.sh). Pyright also pulls it in
+  # transitively; we pin it explicitly so install-pi's dependency is
+  # deliberate, not accidental.
+  "nodeenv>=1.10",
 ]
 
 [tool.setuptools.packages.find]
