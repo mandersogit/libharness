@@ -1,0 +1,97 @@
+commits:
+  - message: |
+      docs(threads-rewrite): v4 plan revision + v1-v4 review-synthesis trail
+
+      Bundle the in-flight planning artifacts left over from the v1→v4 plan
+      revision cycle that informed phase 1+. Without these tracked, every
+      ``dev-notes/2026-05-16-threads-rewrite-plan-v4-review-synthesis.md``
+      citation in the in-tree synthesis docs would dangle. Three things:
+
+      - The threads-rewrite plan itself was revised in-place (v3→v4) and
+        elaborated with revision history, design answers, and a 14-row
+        breaking-changes migration table. The modified plan is the contract
+        phase 2/3/4 implement against.
+      - Six adversarial reviewers reviewed v3; one reviewer flagged five
+        Tier-1 races; v4 closed three and introduced one new
+        (bridge_write_timeout / shared-socket); see
+        `dev-notes/2026-05-16-threads-rewrite-plan-v4-review-synthesis.md`
+        for the full triage.
+      - The event-bridge proposal got an `In co-design` status update so
+        future sessions know it's gated on phase-3-or-later concurrency
+        primitives.
+    files:
+      - dev-notes/2026-05-15-threads-rewrite-plan.md
+      - dev-notes/2026-05-14-event-bridge-proposal.md
+      - dev-notes/2026-05-15-threads-rewrite-plan-review-synthesis.md
+      - dev-notes/2026-05-16-threads-rewrite-plan-v2-review-synthesis.md
+      - dev-notes/2026-05-16-threads-rewrite-plan-v3-review-synthesis.md
+      - dev-notes/2026-05-16-threads-rewrite-plan-v4-review-synthesis.md
+
+  - message: |
+      feat(threads-rewrite): phase 2 — server.py threaded rewrite
+
+      Full rewrite of ``src/libharness/pi/server.py`` from
+      ``asyncio.start_server`` to ``socketserver.ThreadingTCPServer``. Thin
+      ``async def`` shims preserved on ``start``/``close``/``__aenter__``/
+      ``__aexit__`` so the still-asyncio ``harness.py`` and the async live
+      tests stay green during phases 2-3. Phase 4 will drop the shims.
+
+      Per-phase loop executed: implement → impl summary → codex-generated
+      test plan → tests + 3-run flake check (zero flakes) → 3 adversarial
+      reviewers (2 codex gpt-5.5 xhigh + 1 Opus) → fix → commit. Reviewers
+      converged on 4 HIGH + 7 MODERATE findings; all addressed. See
+      ``dev-notes/2026-05-16-threads-rewrite-plan-phase2-review-synthesis.md``
+      for the full fix-by-fix breakdown.
+
+      Headline design points:
+
+      - ``ThreadingTCPServer`` subclass overrides ``process_request`` to
+        gate via ``_handler_slots`` semaphore + add the handler ``Thread``
+        to ``_active_handler_threads`` *before* ``t.start()`` (closes the
+        v4-synthesis T2.5 timing window).
+      - Per-execute private event loop via ``asyncio.run`` so async tool
+        bodies still work during phases 2-3; sync tool bodies are invoked
+        inside the same coroutine so ``asyncio.get_event_loop()`` keeps
+        observing a loop (F9 review fix).
+      - Sidecar disconnect-watcher thread per execute distinguishes ``b""``
+        (cancel only) from non-empty bytes (cancel + protocol violation
+        flag + warning log). In-band violation (extras in the same recv
+        as the request) and a short-timeout pre-response drain close the
+        sidecar/handler race the Opus reviewer reproduced.
+      - ``bridge_write_timeout`` uses ``select.select`` write-readiness
+        (T1.4-v4 deviation) — NOT ``socket.settimeout`` which would race
+        the sidecar's ``recv(1)`` on the same socket. Best-effort: bounds
+        pre-write only; documented in the constructor docstring. Wired
+        through ``PiPythonHarness.bridge_write_timeout``.
+      - ``_close_sync`` waits for ``_serve_entered`` before calling
+        ``shutdown()`` (avoids the deadlock window between ``Thread.start()``
+        and ``serve_forever()`` actually entering its loop), shuts active
+        handler sockets to wake cooperative handlers fast, joins with a
+        single 3 s total deadline (not 2 s per thread × max_handlers).
+      - ``params`` validation strict (rejects non-dict / non-None); manifest
+        requests also enforce half-duplex (``protocolViolation`` flagged).
+      - ``_close_sync`` is concurrency-safe (``_close_lock``) and skips
+        ``current_thread()`` in handler joins (close-from-handler hazard).
+
+      Test coverage: 55 tests in ``tests/pi/test_server.py`` (was 1) plus
+      14 regression tests for review findings; ``fake_pi_rpc.py`` extended
+      to mode-driven (basic / ui-order / late-response /
+      fatal-invalid-json / parallel-execute / slow-consumer); AST contract
+      guard widened to include ``test_server.py``.
+
+      87/87 tests pass on both ``local.venv`` (3.11) and ``local-ft.venv``
+      (3.14t); six consecutive runs, zero flakes. ``make all`` clean.
+
+      Bisect-baseline appended with phase-1 (retroactive — phase 1's commit
+      didn't append) and phase-2 rows (phase-2 SHA placeholder; substituted
+      at the start of the phase-3 commit).
+    files:
+      - src/libharness/pi/server.py
+      - src/libharness/pi/harness.py
+      - tests/pi/test_server.py
+      - tests/pi/fake_pi_rpc.py
+      - tests/pi/test_async_contract_guard.py
+      - dev-notes/rewrite-bisect-baseline.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/2026-05-16-threads-rewrite-plan-phase2-review-synthesis.md
+      - dev-notes/commit-plans/2026-05-16-threads-rewrite-phase2.yaml

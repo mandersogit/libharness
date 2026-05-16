@@ -28,11 +28,17 @@ PHASE_1_SCOPED_FILES: frozenset[str] = frozenset({
 })
 
 
+# Phase 2: server.py rewrite landed; test_server.py is now sync.
+PHASE_2_ADDED_FILES: frozenset[str] = frozenset({
+    "tests/pi/test_server.py",
+})
+
+
 # Future phases append to this list; v4 plan § 8 enumerates the per-phase
-# additions. Phase 1 starts narrow on purpose: the v3-asyncio test files
-# (test_server.py, test_rpc_fake.py, test_set_model.py, test_real_*.py)
-# stay async until their producing module is rewritten.
-SCOPED_FILES: frozenset[str] = PHASE_1_SCOPED_FILES
+# additions. The v3-asyncio rpc / live test files (test_rpc_fake.py,
+# test_set_model.py, test_real_*.py) stay async until their producing module
+# is rewritten.
+SCOPED_FILES: frozenset[str] = PHASE_1_SCOPED_FILES | PHASE_2_ADDED_FILES
 
 
 def _has_async_test_function(tree: ast.AST) -> list[str]:
@@ -156,31 +162,32 @@ def test_phase_1_scoped_files_have_no_pytest_asyncio_imports() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_async_contract_guard_scope_is_phase_1_only() -> None:
-    """SCOPED_FILES is intentionally narrow for phase 1.
+def test_async_contract_guard_scope_is_phase_2() -> None:
+    """SCOPED_FILES at phase 2 == phase 1 set + test_server.py.
 
-    Later phases will widen it as they rewrite their respective test files.
-    Phase 1 covers only the always-sync test infrastructure files.
+    Phase 3 adds test_rpc_fake.py + test_set_model.py; phase 4 adds
+    test_real_pi_integration.py + test_real_llm.py (when the live tests'
+    async patterns are converted to sync).
     """
     expected_in = {
         "tests/pi/test_tools.py",
         "tests/pi/test_jsonl.py",
         "tests/pi/test_runtime_meta.py",
         "tests/pi/test_async_contract_guard.py",
+        "tests/pi/test_server.py",
     }
     expected_out = {
-        "tests/pi/test_server.py",
         "tests/pi/test_rpc_fake.py",
         "tests/pi/test_set_model.py",
         "tests/pi/test_real_pi_integration.py",
         "tests/pi/test_real_llm.py",
     }
     assert expected_in == SCOPED_FILES, (
-        f"Phase 1 SCOPED_FILES mismatch. Got: {sorted(SCOPED_FILES)}"
+        f"Phase 2 SCOPED_FILES mismatch. Got: {sorted(SCOPED_FILES)}"
     )
     for rel in expected_out:
         assert rel not in SCOPED_FILES, (
-            f"{rel} should be deferred to its phase; not in phase-1 scope"
+            f"{rel} should be deferred to its phase; not in phase-2 scope"
         )
 
 

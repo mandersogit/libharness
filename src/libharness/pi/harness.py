@@ -36,6 +36,8 @@ class PiPythonHarness:
         fake_provider_name: str = "pyharness-test",
         fake_model_id: str = "pyharness-faux-1",
         fake_final_text: str = "done",
+        bridge_max_handlers: int = 256,
+        bridge_write_timeout: float | None = None,
     ) -> None:
         self.registry = registry
         self.config = config or PiLaunchConfig()
@@ -50,7 +52,11 @@ class PiPythonHarness:
         self.fake_model_id = fake_model_id
         self.fake_final_text = fake_final_text
 
-        self.server = PythonToolServer(registry)
+        self.server = PythonToolServer(
+            registry,
+            max_handlers=bridge_max_handlers,
+            bridge_write_timeout=bridge_write_timeout,
+        )
         self.pi: PiRpcClient | None = None
         self._tempdir: tempfile.TemporaryDirectory[str] | None = None
         self._extension_paths: list[Path] = []
