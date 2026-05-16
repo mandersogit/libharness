@@ -23,8 +23,10 @@ PI_INSTALL="$SANDBOX/pi-install"
 PI_CLI="$PI_INSTALL/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
 PI_HOME="$SANDBOX/pi-home"
 
-# Python venv is managed by `make install`, not by these scripts.
-VENV="$PROJECT_ROOT/local.venv"
+# Python venv is managed by `make install`, not by these scripts. Override
+# via LIBHARNESS_VENV to target a different venv (e.g. the 3.14t
+# freethreaded venv at local-ft.venv/).
+VENV="${LIBHARNESS_VENV:-$PROJECT_ROOT/local.venv}"
 
 # nodeenv lives in the py3-14 miniforge env.
 NODEENV_PYTHON="/opt/miniforge/envs/base-py3-14/bin/python"

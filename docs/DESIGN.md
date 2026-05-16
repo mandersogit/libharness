@@ -201,11 +201,11 @@ We use **pi-native sessions** as the persistence and history-navigation model. L
 
 Persistence is configured on `PiLaunchConfig`:
 
-| Field | Default | Effect |
-| --- | --- | --- |
-| `no_session` | `True` | ephemeral; no JSONL written to disk |
-| `session_dir` | `None` | overrides `~/.pi/agent/sessions/<encoded-cwd>/` |
-| `session` | `None` | resume a session by path or partial UUID prefix |
+| Field         | Default | Effect                                          |
+| ------------- | ------- | ----------------------------------------------- |
+| `no_session`  | `True`  | ephemeral; no JSONL written to disk             |
+| `session_dir` | `None`  | overrides `~/.pi/agent/sessions/<encoded-cwd>/` |
+| `session`     | `None`  | resume a session by path or partial UUID prefix |
 
 Currently exposed as typed methods on `PiRpcClient`: `new_session()`, `get_messages()`, `get_last_assistant_text()`. The rest of pi's session API (`fork`, `clone`, `switch_session`, `get_session_stats`, `export_html`, `set_session_name`, `get_fork_messages`) is reachable today via `client.send({"type": "..."})` and is planned to grow typed wrappers — see SESSION-STATE.md for the pending task.
 
@@ -276,10 +276,33 @@ RPC already exposes `extension_ui_request` / `extension_ui_response` for dialogs
 
 Decisions made and their rationale. New decisions append; old ones stay for historical context (mark as superseded if reversed, never delete).
 
-| Date | Decision | Brief rationale | Reference |
-| --- | --- | --- | --- |
-| 2026-05-14 | Bridge transport: loopback TCP + bearer token, not Unix domain socket | The token already addresses the realistic local-process threat; UDS would be a marginal hardening, not a structural fix. Windows support preserved for free. | `dev-notes/2026-05-14-pi-internals-notes.md` § Bridge transport |
-| 2026-05-14 | Sessions: use pi-native; no Python-side session model | Pi already maintains a cross-file tree-of-entries with first-class fork/branch operations. Replicating in Python would duplicate non-trivial state with no clear gain. | `dev-notes/2026-05-14-pi-internals-notes.md` § Session structure |
+| Date       | Decision                                              |
+| ---------- | ----------------------------------------------------- |
+| 2026-05-14 | Bridge transport: loopback TCP + bearer token, no UDS |
+| 2026-05-14 | Sessions: pi-native; no Python-side session model     |
+| 2026-05-15 | Concurrency: threads, freethreading-first             |
+
+**Detail:**
+
+- *2026-05-14 — Bridge transport:* Loopback TCP + bearer token, not a
+  Unix domain socket. The token already addresses the realistic
+  local-process threat; UDS would be a marginal hardening, not a
+  structural fix. Windows support preserved for free. Reference:
+  `dev-notes/2026-05-14-pi-internals-notes.md` § Bridge transport.
+- *2026-05-14 — Sessions:* Use pi-native sessions; no Python-side
+  session model. Pi already maintains a cross-file tree-of-entries with
+  first-class fork/branch operations. Replicating in Python would
+  duplicate non-trivial state with no clear gain. Reference:
+  `dev-notes/2026-05-14-pi-internals-notes.md` § Session structure.
+- *2026-05-15 — Concurrency:* Primarily **D** — threads on freethreaded
+  CPython 3.14t, optimizing for FT parallelism opportunities.
+  Backwards-compatible with **C** — the same code runs on standard
+  CPython 3.11+ under the GIL, verified by `make test-311`. Sync `def`
+  for tool functions and `on_*` hooks; `async def` is rejected at
+  decoration time (not-pi-2 pattern). The dual-venv scaffolding
+  (`local.venv` 3.11 + `local-ft.venv` 3.14t; `make all` runs both) is
+  the verification surface. Full rationale and the original co-design
+  analysis live at `dev-notes/2026-05-15-concurrency-model-discussion.md`.
 
 ## When to switch away
 

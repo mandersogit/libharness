@@ -1,11 +1,17 @@
 # Virtualenv
 local.venv/
+local-ft.venv/
 
 # Pi/Node sandbox
 .sandbox/
 
-# Build
 # External-reference symlinks. `links/` holds per-developer symlinks
+# into nearby checkouts (e.g. `links/pi` → ~/git/external/pi/) used for
+# file:line citations in dev-notes. Each contributor sets these up
+# locally — paths won't resolve identically across machines.
+links/
+
+# Build
 build/
 dist/
 *.egg-info/

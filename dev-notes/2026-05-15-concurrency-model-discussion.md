@@ -1,9 +1,17 @@
 ---
-status: In co-design
+status: Resolved
 created: '2026-05-15'
 ---
 
 # Concurrency model: asyncio vs threads (with freethreading consideration)
+
+## Resolution (2026-05-15)
+
+**Decision:** Primarily **D** — threads on freethreaded CPython 3.14t, optimizing for freethreading parallelism opportunities. Backwards-compatible with **C** — the same code runs on standard CPython 3.11+ under the GIL, verified by `make test-311`. Sync `def` for tool functions and `on_*` hooks; `async def` is rejected at decoration time (not-pi-2 pattern).
+
+This matches the author's `Agent`-with-`on_*`-hooks design intent and aligns libharness with the three-iteration family precedent (hildy, simple-harness, not-pi-2). The dual-venv scaffolding (`local.venv` 3.11 + `local-ft.venv` 3.14t, `make all` runs both) is the verification surface. The asyncio → threads rewrite of `src/libharness/pi/{rpc_client,server,tools}.py` and the `PiPythonHarness` lifecycle is the next implementation milestone; see SESSION-STATE.md § Pending tasks for current shape and gating.
+
+Everything below this section is the original co-design analysis, retained for rationale and historical context. Decision points #1–#4 in § Decision points are now answered as recorded above; #5 (Agent class design + concrete `on_*` hook set) is a follow-up co-design.
 
 ## What's being decided
 

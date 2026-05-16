@@ -1,0 +1,254 @@
+repo: .
+
+commits:
+  - message: |
+      docs: vendor v1–v5 predecessors + sweep ~/Downloads citations
+
+      Pulls the predecessor proof-of-concept iterations into the repo so
+      every citation in the review docs is verifiable in-tree, and the
+      `~/Downloads/pi_python_harness/` working folder can be retired.
+
+      **New tree: dev-notes/predecessors/ (108 files, ~1.3 MB).**
+
+        - `prompt.txt`: the prompt that drove all four AI runs producing
+          v1–v4.
+        - `v1/`, `v2/`, `v3/`, `v4/`, `v5-synthesis/`: each mirrors the
+          inner layout of the corresponding `~/Downloads/version-*`
+          directory — `docs/`, `src/` (or `pi_python_harness/` at top
+          level in v2), `tests/`, `examples/`, `pyproject.toml`,
+          `README.md`, plus the v5 `LICENSE`. Frozen historical
+          artifacts; editorial policy is "do not reformat in place".
+        - `README.md`: index explaining origin, layout, what's
+          intentionally not vendored (pi-main is reached via
+          `links/pi/`; the ~700 MB sandbox is throwaway), and the
+          toolchain exclusions below.
+
+      **Citation sweep across dev-notes.**
+
+      `~/Downloads/pi_python_harness/...` paths repointed to in-tree
+      equivalents:
+
+        - pi source citations → `links/pi/...` (a symlink each
+          contributor sets up locally to their pi checkout; gitignored).
+        - Predecessor source / docs citations →
+          `dev-notes/predecessors/v*/...`.
+
+      Files touched by the sweep:
+
+        - `dev-notes/2026-05-14-event-bridge-proposal.md` (1 ref)
+        - `dev-notes/2026-05-14-pi-internals-notes.md` (2 refs)
+        - `dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md`
+          (6 refs)
+        - `dev-notes/2026-05-14-pi-python-harness-version-review.md`
+          (~7 refs)
+        - `dev-notes/README.md` (index rewrite + predecessors entry)
+
+      **Toolchain guards** so the vendored material doesn't pollute the
+      dev loop:
+
+        - `Makefile`: `MD_FILES` adds
+          `-not -path 'dev-notes/predecessors/v*/*'` (only the index
+          README is linted/formatted; the v*/ vendored content is
+          skipped).
+        - `pyproject.toml`:
+          `tool.pytest.ini_options.norecursedirs` adds `dev-notes`,
+          `links`, `.sandbox`, and both venvs. Belt-and-braces;
+          `testpaths` already scopes collection to `tests/` but a stray
+          `pytest dev-notes/...` would otherwise walk in.
+        - `.gitignore`: `links/` (per-developer symlinks — each
+          contributor sets up `links/pi` → their pi checkout).
+
+      Validation: `make all` clean on both venvs; `make lint-md` shows
+      only the pre-existing MD040 warning at pi-internals-notes.md:108.
+      No active `~/Downloads/` references remain (3 expected ones: the
+      SESSION-STATE tombstone, predecessors/README.md origin notes, and
+      the historical commit-plan record).
+    files:
+      - path: .gitignore
+        select:
+          contains: "External-reference symlinks"
+      - path: Makefile
+        select:
+          any:
+            - contains: "`dev-notes/predecessors/` is excluded"
+            - contains: "-not -path 'dev-notes/predecessors/v*/*'"
+      - pyproject.toml
+      - dev-notes/2026-05-14-event-bridge-proposal.md
+      - dev-notes/2026-05-14-pi-internals-notes.md
+      - dev-notes/2026-05-14-pi-python-harness-v5-synthesis-review.md
+      - dev-notes/2026-05-14-pi-python-harness-version-review.md
+      - dev-notes/README.md
+      - dev-notes/predecessors/prompt.txt
+      - dev-notes/predecessors/README.md
+      - dev-notes/predecessors/v1/docs/ASSESSMENT.md
+      - dev-notes/predecessors/v1/docs/DESIGN.md
+      - dev-notes/predecessors/v1/docs/EXECUTIVE_SUMMARY.md
+      - dev-notes/predecessors/v1/docs/IMPLEMENTATION_JOURNAL.md
+      - dev-notes/predecessors/v1/docs/SOURCE_INSPECTION_NOTES.md
+      - dev-notes/predecessors/v1/docs/TESTING_REPORT.md
+      - dev-notes/predecessors/v1/examples/basic.py
+      - dev-notes/predecessors/v1/pyproject.toml
+      - dev-notes/predecessors/v1/README.md
+      - dev-notes/predecessors/v1/src/py_pi_harness/__init__.py
+      - dev-notes/predecessors/v1/src/py_pi_harness/client.py
+      - dev-notes/predecessors/v1/src/py_pi_harness/harness.py
+      - dev-notes/predecessors/v1/src/py_pi_harness/server.py
+      - dev-notes/predecessors/v1/src/py_pi_harness/shim.py
+      - dev-notes/predecessors/v1/src/py_pi_harness/shims/__init__.py
+      - dev-notes/predecessors/v1/src/py_pi_harness/shims/python_tools_extension.ts
+      - dev-notes/predecessors/v1/src/py_pi_harness/tools.py
+      - dev-notes/predecessors/v1/tests/test_pi_integration_manual.py
+      - dev-notes/predecessors/v1/tests/test_unit.py
+      - dev-notes/predecessors/v2/docs/ASSESSMENT.md
+      - dev-notes/predecessors/v2/docs/DESIGN.md
+      - dev-notes/predecessors/v2/docs/EXECUTIVE_SUMMARY.md
+      - dev-notes/predecessors/v2/docs/JOURNAL.md
+      - dev-notes/predecessors/v2/docs/RUN_RESULTS.md
+      - dev-notes/predecessors/v2/docs/SOURCE_NOTES.md
+      - dev-notes/predecessors/v2/examples/echo_tools.py
+      - dev-notes/predecessors/v2/examples/launch_with_tools.py
+      - dev-notes/predecessors/v2/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v2/pi_python_harness/cli.py
+      - dev-notes/predecessors/v2/pi_python_harness/py.typed
+      - dev-notes/predecessors/v2/pi_python_harness/rpc.py
+      - dev-notes/predecessors/v2/pi_python_harness/shim.py
+      - dev-notes/predecessors/v2/pi_python_harness/tools.py
+      - dev-notes/predecessors/v2/pyproject.toml
+      - dev-notes/predecessors/v2/README.md
+      - dev-notes/predecessors/v2/tests/test_rpc_real_pi.py
+      - dev-notes/predecessors/v2/tests/test_tools.py
+      - dev-notes/predecessors/v3/ARTIFACT_INDEX.md
+      - dev-notes/predecessors/v3/docs/assessment.md
+      - dev-notes/predecessors/v3/docs/design-rpc-python-tool-bridge.md
+      - dev-notes/predecessors/v3/docs/executive-summary.md
+      - dev-notes/predecessors/v3/docs/implementation-journal.md
+      - dev-notes/predecessors/v3/docs/runbook.md
+      - dev-notes/predecessors/v3/docs/source-findings.md
+      - dev-notes/predecessors/v3/pyproject.toml
+      - dev-notes/predecessors/v3/README.md
+      - dev-notes/predecessors/v3/src/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/bridge.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/cli.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/client.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/harness.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/jsonl.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/py.typed
+      - dev-notes/predecessors/v3/src/pi_python_harness/shim.py
+      - dev-notes/predecessors/v3/src/pi_python_harness/tools.py
+      - dev-notes/predecessors/v3/tests/test_jsonl.py
+      - dev-notes/predecessors/v3/tests/test_rpc_client.py
+      - dev-notes/predecessors/v3/tests/test_shim.py
+      - dev-notes/predecessors/v3/tests/test_tools_and_bridge.py
+      - dev-notes/predecessors/v4/docs/ASSESSMENT.md
+      - dev-notes/predecessors/v4/docs/DESIGN.md
+      - dev-notes/predecessors/v4/docs/EXECUTIVE_SUMMARY.md
+      - dev-notes/predecessors/v4/docs/IMPLEMENTATION_JOURNAL.md
+      - dev-notes/predecessors/v4/docs/QUICKSTART.md
+      - dev-notes/predecessors/v4/docs/SOURCE_EVIDENCE.md
+      - dev-notes/predecessors/v4/examples/minimal_usage.py
+      - dev-notes/predecessors/v4/pyproject.toml
+      - dev-notes/predecessors/v4/README.md
+      - dev-notes/predecessors/v4/src/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/broker.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/harness.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/jsonl.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/rpc.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/shim.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/tools.py
+      - dev-notes/predecessors/v4/src/pi_python_harness/types.py
+      - dev-notes/predecessors/v4/tests/fake_pi_rpc.py
+      - dev-notes/predecessors/v4/tests/test_jsonl.py
+      - dev-notes/predecessors/v4/tests/test_rpc_client.py
+      - dev-notes/predecessors/v4/tests/test_shim.py
+      - dev-notes/predecessors/v4/tests/test_tools_and_broker.py
+      - dev-notes/predecessors/v5-synthesis/docs/AUDIT_REPORT.md
+      - dev-notes/predecessors/v5-synthesis/docs/BEST_PRACTICES.md
+      - dev-notes/predecessors/v5-synthesis/docs/DESIGN.md
+      - dev-notes/predecessors/v5-synthesis/docs/IMPLEMENTATION_JOURNAL.md
+      - dev-notes/predecessors/v5-synthesis/docs/RUN_RESULTS.md
+      - dev-notes/predecessors/v5-synthesis/docs/SOURCE_FINDINGS.md
+      - dev-notes/predecessors/v5-synthesis/examples/basic.py
+      - dev-notes/predecessors/v5-synthesis/LICENSE
+      - dev-notes/predecessors/v5-synthesis/pyproject.toml
+      - dev-notes/predecessors/v5-synthesis/README.md
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/cli.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/harness.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/jsonl.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/py.typed
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/rpc.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/server.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/shim.py
+      - dev-notes/predecessors/v5-synthesis/src/pi_python_harness/tools.py
+      - dev-notes/predecessors/v5-synthesis/tests/fake_pi_rpc.py
+      - dev-notes/predecessors/v5-synthesis/tests/test_jsonl.py
+      - dev-notes/predecessors/v5-synthesis/tests/test_real_pi_integration.py
+      - dev-notes/predecessors/v5-synthesis/tests/test_rpc_fake.py
+      - dev-notes/predecessors/v5-synthesis/tests/test_server.py
+      - dev-notes/predecessors/v5-synthesis/tests/test_tools.py
+
+  - message: |
+      build: dual-venv scaffold + docs: concurrency-model decision
+
+      Equips libharness for the C+D concurrency model and records the
+      decision.
+
+      **Concurrency decision: primarily D (threads on freethreaded
+      CPython 3.14t — optimize for FT parallelism opportunities),
+      backwards-compatible with C (threads on standard CPython 3.11+
+      under the GIL, verified by `make test-311`).** Sync `def` for
+      tool functions and `on_*` hooks; `async def` rejected at
+      decoration. The asyncio → threads rewrite of
+      `rpc_client/server/tools/PiPythonHarness` is the next
+      implementation milestone, gated on Agent-class co-design.
+
+      Doc changes:
+
+        - `dev-notes/2026-05-15-concurrency-model-discussion.md`:
+          frontmatter "In co-design" → "Resolved"; new "Resolution
+          (2026-05-15)" section at top summarizing the decision and
+          citing the dual-venv scaffolding below as the verification
+          surface. Original analysis preserved beneath.
+        - `docs/DESIGN.md § Resolved decisions`: new 2026-05-15 row.
+          Refactored the whole table to compact 2-column form with the
+          full rationale in a sidecar list (mdformat reflow on the
+          3-column form aligned columns past the 150-col rule; sidecar
+          is what CLAUDE.md prescribes for overflow).
+        - `dev-notes/SESSION-STATE.md`: fresh-session quickstart now
+          treats concurrency as historical reference, not an open gate.
+          "Current state" gains a bullet citing the decision and the
+          dual-venv scaffold below. Pending tasks reordered so the
+          asyncio → threads rewrite is the next implementation
+          milestone; event-bridge remains the one open co-design gate.
+
+      **Dual-venv scaffold (verification surface for C+D).**
+      `local.venv/` stays Python 3.11 standard; new `local-ft.venv/` is
+      Python 3.14t freethreading (`sys._is_gil_enabled() == False`).
+      Both built from `/opt/miniforge/envs/base-py3-{11,14-nogil}/`.
+      All dev deps install cleanly as cp314t wheels (mypy 2.1, pyright
+      1.1.409, ruff 0.15, pytest 9, hypothesis 6, coverage 7).
+
+        - `Makefile`: PYTHON_311 / PYTHON_314T interpreter vars;
+          VENV / VENV_FT venv paths; per-venv tool path vars; install
+          / lint / typecheck (mypy + pyright) / test / test-live / all
+          targets split into -311 and -ft variants. mypy/pyright run
+          with `--python-version 3.14` on the ft side. Top-level
+          `make all` runs both. `format` / `lint-fix` / `format-md`
+          stay single-source on the 3.11 venv.
+        - `scripts/lib/env.sh`: `VENV` honors `LIBHARNESS_VENV` env
+          override, so `scripts/test.sh` can target the ft venv via
+          `LIBHARNESS_VENV=$(pwd)/local-ft.venv scripts/test.sh ...`.
+          No `activate` anywhere — explicit absolute paths throughout
+          per CLAUDE.md ("never activate a venv").
+        - `.gitignore`: `local-ft.venv/`.
+
+      Validation: `make all` clean on both venvs; 7 unit + 1 set_model
+      regression pass under both Python 3.11 and 3.14t.
+    files:
+      - .gitignore
+      - Makefile
+      - scripts/lib/env.sh
+      - dev-notes/2026-05-15-concurrency-model-discussion.md
+      - docs/DESIGN.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-15-predecessors-and-concurrency.yaml
