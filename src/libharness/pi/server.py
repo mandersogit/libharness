@@ -322,9 +322,13 @@ class _BridgeHandler(socketserver.BaseRequestHandler):
 
     # Drain window: small positive timeout gives a recently-sent violation
     # byte time to propagate from the client's kernel buffer into the
-    # server-side recv buffer. Sub-ms on fast loopback; up to ~10 ms under
-    # scheduler contention. Tested with 30 ms; flake-free across 6 runs.
-    _LATE_DRAIN_TIMEOUT_S = 0.03
+    # server-side recv buffer. Sub-ms on fast loopback; up to ~50 ms under
+    # heavy contention (FT venv + parallel tests). 100 ms is the safe
+    # upper bound from empirical testing; trades latency on the success
+    # path (no violation byte) for reliable flag-setting on the violation
+    # path. The synchronous half-duplex bridge has per-tool human-scale
+    # latency budgets, so this is acceptable.
+    _LATE_DRAIN_TIMEOUT_S = 0.1
 
     def _drain_late_violation_byte(
         self, protocol_violation: threading.Event, cancelled: threading.Event,

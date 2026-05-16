@@ -5,6 +5,9 @@ v5 of the harness shipped ``set_model`` as
 RPC contract requires ``modelId`` instead of ``model`` (see
 ``packages/coding-agent/src/modes/rpc/rpc-types.ts:31`` in pi-mono).
 This test pins the wire shape so the bug cannot quietly reappear.
+
+Phase 3: rewritten from ``async def`` to sync; exercises the new
+synchronous ``PiRpcClient._set_model_sync`` path directly.
 """
 
 from __future__ import annotations
@@ -28,10 +31,14 @@ def _fake_pi_config() -> PiLaunchConfig:
     )
 
 
-async def test_set_model_uses_modelId_field() -> None:
+def test_set_model_uses_modelId_field() -> None:
     """set_model must serialize the model identifier under ``modelId``."""
-    async with PiRpcClient(_fake_pi_config()) as client:
-        response = await client.set_model("openai-codex", "gpt-5.5")
+    client = PiRpcClient(_fake_pi_config())
+    client._start_sync()
+    try:
+        response = client._set_model_sync("openai-codex", "gpt-5.5")
+    finally:
+        client._close_sync()
 
     received = (response.get("data") or {}).get("received") or {}
     assert received.get("type") == "set_model"

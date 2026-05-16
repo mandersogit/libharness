@@ -1,0 +1,107 @@
+commits:
+  - message: |
+      feat(threads-rewrite): phase 3 — rpc.py threaded rewrite + new exception hierarchy
+
+      Full rewrite of ``src/libharness/pi/rpc.py`` from asyncio to threads.
+      Wire protocol unchanged. New exception hierarchy: ``PiRpcError`` is
+      the abstract base; ``PiRpcCommandError`` (was the old PiRpcError
+      semantic), ``PiRpcProcessError``, ``ReentrantRPCError``,
+      ``EventQueueEmpty`` are subclasses. All exported from
+      ``libharness.pi``. Existing ``except PiRpcError:`` catchers keep
+      working via the base.
+
+      Async ``def`` shims preserved on every public method (via
+      ``asyncio.to_thread`` so the asyncio event loop is not blocked while
+      the sync core runs), so the still-asyncio ``PiPythonHarness`` and
+      live tests stay green during phases 2-3. Phase 4 drops the shims.
+
+      Per-phase loop executed: implement → impl summary → codex-generated
+      test plan (24 proposed; 17 implemented) → tests + 3-run flake check
+      (zero flakes) → 3 adversarial reviewers (2 codex gpt-5.5 xhigh + 1
+      Opus) → fix → commit. Reviewers converged on 1 CRITICAL + 7 HIGH
+      bugs; all addressed. See
+      ``dev-notes/2026-05-16-threads-rewrite-plan-phase3-review-synthesis.md``
+      for the synthesis.
+
+      Headline design points:
+
+      - **Subprocess.Popen + 2 daemon reader threads** (``pi-rpc-stdout``
+        and ``pi-rpc-stderr``). Brief startup wait so launch failures
+        surface as ``PiRpcProcessError`` rather than later send timeouts.
+      - **``dict[req_id, Future]`` + ``_pending_lock``** for request/response
+        correlation. ``_pop_pending`` + ``_complete_future`` helpers per
+        T1.2-v4 (NOT a single polymorphic ``_settle_future``); the
+        ``InvalidStateError`` swallow in ``_complete_future`` tolerates
+        the response-vs-fatal double-settlement race.
+      - **UI response priority: literal v3-synthesis pattern.**
+        ``_write_stdin_normal`` acquires ``_send_lock`` FIRST, then
+        re-checks ``_ui_response_pending`` under the lock, releases +
+        waits + retries if set. NOT v4's "layered locking" (the v4
+        synthesis caught that as a Tier-1 CRITICAL bug). UI gate is set
+        IMMEDIATELY for response-bearing methods (before event dispatch)
+        per F2 review fix — a slow event handler otherwise created a
+        window where caller-thread sends could write before the UI
+        response.
+      - **``_set_fatal`` is idempotent + atomic** (snapshots ``_pending``
+        under the lock, settles after release). Reader exceptions and
+        close both go through this single path.
+      - **``_close_sync`` escalates terminate/kill BEFORE acquiring
+        ``_send_lock``** per F3 review fix: a caller blocked in
+        ``proc.stdin.write`` (pi not draining) holds the lock; close
+        must unblock by terminating pi first or the lock acquire blocks
+        forever. ``_force_terminate_subprocess`` helper does the
+        SIGTERM/wait/kill/wait dance.
+      - **PiRpcClient is single-use.** Restart after close raises
+        ``RuntimeError`` per F6 review fix (``_fatal_error`` is not reset;
+        a silent restart would launch a process that immediately fails on
+        first send).
+      - **Caller-supplied timeout is honored** in the UI gate retry per F5
+        review fix (uses ``min(deadline - now, request_timeout)``).
+      - **Partial-start failure cleanup** per F8: subprocess + reader
+        threads cleaned up before raising; ``_close_complete`` set so the
+        instance becomes terminal.
+      - **UI response key collision fix** per F1 review fix (CRITICAL,
+        Opus-reproduced): the response frame now spreads handler-returned
+        keys FIRST so user keys can't override the framework's ``type``
+        or ``id``.
+      - **``_in_dispatch.value`` always reset** in ``_handle_extension_ui_request``
+        via the outer ``finally`` (F4 review fix; the inner block had no
+        finally and could leak ``True``).
+      - **Event handler non-None return → warning log** per F12 review fix
+        (migration signal; v4 plan promised it but the original impl
+        didn't have it).
+      - **Stderr reader logs on read error** + caches the stream reference
+        (F9 + F13 review fixes).
+      - **Async shims use ``asyncio.to_thread``** per F7 review fix so
+        ``asyncio.wait_for`` and task cancellation actually work at the
+        asyncio layer (the request itself is still not cancellable in the
+        sync core, but the loop is free).
+
+      Test coverage: 35 tests in ``tests/pi/test_rpc_fake.py`` (was 1) +
+      8 regression tests for review findings. ``tests/pi/test_set_model.py``
+      rewritten as sync. AST contract guard widened to include
+      ``test_rpc_fake.py`` + ``test_set_model.py``.
+
+      129/129 tests pass on both ``local.venv`` (3.11) and ``local-ft.venv``
+      (3.14t); six consecutive runs, zero flakes. ``make all`` clean.
+
+      Bisect-baseline appended with the real phase-2 SHA substituted for
+      the previous ``PHASE2_PLACEHOLDER``, plus a ``PHASE3_PLACEHOLDER``
+      row for this commit (substituted at the start of the phase-4
+      commit).
+
+      Phase-4 design proposal landed at
+      ``dev-notes/2026-05-16-threads-rewrite-phase4-design.md`` — pending
+      adversarial design review.
+    files:
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/__init__.py
+      - src/libharness/pi/server.py
+      - tests/pi/test_rpc_fake.py
+      - tests/pi/test_set_model.py
+      - tests/pi/test_async_contract_guard.py
+      - dev-notes/rewrite-bisect-baseline.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/2026-05-16-threads-rewrite-plan-phase3-review-synthesis.md
+      - dev-notes/2026-05-16-threads-rewrite-phase4-design.md
+      - dev-notes/commit-plans/2026-05-16-threads-rewrite-phase3.yaml
