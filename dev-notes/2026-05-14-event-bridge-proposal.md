@@ -69,6 +69,25 @@ Pi events are *partially* visible to Python today: `PiRpcClient` exposes events 
 
 So the harness already has *observation* of a subset, via RPC. What's missing is (a) the rest of the event surface, and (b) any ability to influence pi.
 
+## Dispatch mechanism — constraint inherited from the threads rewrite
+
+The threads-rewrite plan (`dev-notes/2026-05-15-threads-rewrite-plan.md`, gated on this co-design plus the four `GATE` items in `dev-notes/2026-05-15-threads-rewrite-plan-review-synthesis.md` § Tier 1) lands with a single shared dispatch site. The rewrite synthesis recommendation for phase 1 is option **(a) — forbid + detect reentrant RPC**: event/UI handlers run synchronously on the RPC stdout reader thread, and any attempt to call `client.send(...)` from inside a handler raises `ReentrantRPCError` loudly rather than deadlocking. Deadlocks otherwise because the only thread that can drain pi's response is the one executing the handler.
+
+This constraint shapes the event-bridge implementation. Per approach:
+
+- **Approach A (notify only).** Works as-drafted under (a). A logging/metrics handler doesn't need to call back into pi. If it ever wants to (e.g. fetch session state for richer logging), it must queue work for the main thread or schedule a follow-up rather than calling `client.get_state()` inline. Phase-1-viable with no additional dispatch machinery.
+- **Approach B (full two-way).** Cannot work on the reader thread under (a). A `tool_call` gate that wants to consult session state before deciding to block needs to call `client.get_state()` from inside the handler, which (a) forbids. The event-bridge implementation must add a `ThreadPoolExecutor` for deliver-mode handlers, with response correlation back to the reader thread (worker computes the result; reader thread writes the response frame under `_send_lock`).
+- **Approach C (hybrid).** The cleanest mapping of the threads rewrite's single dispatch site onto pi's notification-vs-decision distinction. Notify-events stay on the reader thread under (a); deliver-events go to the worker pool. The two halves of the protocol get the two halves of the dispatch model for free — this is the natural shape, and the reason the rewrite synthesis defers worker-pool design to *this* proposal rather than building it speculatively in phase 1.
+
+**Worker-pool design questions** (live for whichever of B or C is chosen; skip if A is chosen):
+
+- `max_workers`: default value, configurable, per-event?
+- Response correlation for deliver-mode: per-event `concurrent.futures.Future` keyed by event id, identical pattern to the threads-rewrite plan's RPC correlation map.
+- Reentrancy from inside a worker-pool handler: presumably allowed (the worker is not the reader thread, so `client.send()` can't deadlock that way), but the chain still needs an "in dispatch depth" guard or recursion limit to prevent runaway nesting if a handler triggers an event that triggers another handler.
+- Backpressure: if the pool is saturated, does the next deliver-event block pi or fail-closed?
+
+These belong here, not in the threads-rewrite plan. Decision point #1 below subsumes them.
+
 ## Three protocol sketches
 
 All three reuse the existing bridge transport (loopback TCP JSONL, token-protected) and the manifest handshake (`protocolVersion`). Differences are at the protocol-shape level.
@@ -179,7 +198,7 @@ Cons:
 
 The author needs to weigh in on these before any implementation starts:
 
-1. **Scope of v1**: A (notify only), B (full), or C (hybrid)? If C, does v1 implement both halves or stage them (notify in v1, deliver in v2)?
+1. **Scope of v1**: A (notify only), B (full), or C (hybrid)? If C, does v1 implement both halves or stage them (notify in v1, deliver in v2)? B and C both require the worker pool described in § "Dispatch mechanism" above; A does not.
 1. **Priority events**: which events do we wire first? My read of the review history (event bridge unlocks "permission gates", "path protection", "context injection") suggests `tool_call`, `before_agent_start`, and `context` are the highest-value decision events. Confirm or override.
 1. **Handler-chaining semantics**: mirror pi (per-event chain semantics, expensive to get right) or simplify to one handler per event (cheap, may diverge from pi extensions' expected behavior)?
 1. **Failure mode default**: when a Python handler crashes or times out on a decision event, does pi proceed with the un-modified action (fail-open) or block/cancel (fail-closed)? Either is defensible. Likely needs to be configurable per event.
