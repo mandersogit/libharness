@@ -42,10 +42,12 @@ help:
 	@echo "  Tests:"
 	@echo "    test            — pytest, excluding live marker"
 	@echo "    test-live       — pytest with live marker (requires pi + auth)"
+# `dev-notes/predecessors/` is excluded: those are vendored AI-iteration
 	@echo ""
 	@echo "  Quality (code):"
 	@echo "    lint            — ruff check"
 	@echo "    lint-fix        — ruff check --fix"
+                    -not -path 'dev-notes/predecessors/v*/*' \
 	@echo "    typecheck       — mypy + pyright"
 	@echo "    format          — ruff format"
 	@echo "    all             — lint + typecheck + test"

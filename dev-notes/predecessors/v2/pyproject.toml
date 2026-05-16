@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pi-python-harness"
+version = "0.1.0"
+description = "Python-first control plane and tool bridge for the Pi agent harness"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Generated initial implementation"}]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Typing :: Typed",
+]
+
+[project.scripts]
+pi-python-tool-server = "pi_python_harness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pi_python_harness*"]

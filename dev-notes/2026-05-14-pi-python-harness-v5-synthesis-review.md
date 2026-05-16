@@ -18,8 +18,8 @@ Reviewer: Claude Opus 4.7. Date: 2026-05-14.
 ChatGPT 5.5 Pro was given v1–v4 (the four parallel runs from
 [2026-05-14-pi-python-harness-version-review.md](./2026-05-14-pi-python-harness-version-review.md))
 and asked to audit them and produce a synthesized fifth version. The
-artifact lives at
-`~/Downloads/pi_python_harness/version-5-synthesis/pi-python-harness-synthesis/`.
+artifact is vendored at
+`dev-notes/predecessors/v5-synthesis/`.
 
 This note evaluates v5 on its own merits, audits its self-audit, and
 calls out what it kept, dropped, added, missed, and got wrong.
@@ -54,7 +54,7 @@ Below I use v1–v4 to stay consistent with the earlier review.
   from `@earendil-works/pi-ai` rather than hand-rolling synthetic
   `streamSimple` events the way v1 did. (I verified the
   `pi-ai` exports exist at
-  `~/Downloads/pi_python_harness/pi-main/packages/ai/src/providers/faux.ts`.) The faux provider is
+  `links/pi/packages/ai/src/providers/faux.ts`.) The faux provider is
   also loaded as a **separate** test-only extension, not compiled into
   the production shim — addressing v1's "test code in the prod shim"
   smell.
@@ -95,7 +95,7 @@ These are not present in any of the four predecessors:
   opt-in for `no_builtin_tools` and `--tools <list>`. v1 had these as
   config booleans too; v2/v3/v4 were less complete on this. I verified
   `--no-builtin-tools` is a real flag at
-  `~/Downloads/pi_python_harness/pi-main/packages/coding-agent/src/cli/args.ts:106-107`.
+  `links/pi/packages/coding-agent/src/cli/args.ts:106-107`.
 - **Working out-of-the-box test packaging.** `pyproject.toml` declares
   `pythonpath = ["src"]` and `asyncio_mode = "auto"`. The audit
   correctly observes v3 and v4 failed `pytest` without
@@ -106,7 +106,7 @@ These are not present in any of the four predecessors:
 The synthesis silently changes the RPC argument shape for `set_model`:
 
 ```python
-# ~/Downloads/pi_python_harness/version-5-synthesis/.../rpc.py:301
+# dev-notes/predecessors/v5-synthesis/src/pi_python_harness/rpc.py:301
 async def set_model(self, provider: str, model: str) -> JsonObject:
     return await self.send({"type": "set_model", "provider": provider, "model": model})
 ```
@@ -114,14 +114,14 @@ async def set_model(self, provider: str, model: str) -> JsonObject:
 Pi's RPC contract requires `modelId`, not `model`:
 
 ```ts
-// ~/Downloads/pi_python_harness/pi-main/packages/coding-agent/src/modes/rpc/rpc-types.ts:31
+// links/pi/packages/coding-agent/src/modes/rpc/rpc-types.ts:31
 | { id?: string; type: "set_model"; provider: string; modelId: string }
 ```
 
 The handler explicitly errors on a missing model id:
 
 ```ts
-// ~/Downloads/pi_python_harness/pi-main/packages/coding-agent/src/modes/rpc/rpc-mode.ts:457
+// links/pi/packages/coding-agent/src/modes/rpc/rpc-mode.ts:457
 return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
 ```
 

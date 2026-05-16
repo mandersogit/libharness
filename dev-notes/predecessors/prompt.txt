@@ -1,0 +1,9 @@
+I want to use Pi as a agentic harness, but I want to author my customization of the harness and environment exclusively in python (keeping any typescript that is truly required to a bare minimum). I want to write tools in python, I want to do any and all extensions in python.
+
+Opus suggested an arrangement where pi could be launched in RPC mode from a python program, and then a TS shim could be made such that tools could be implemented in python but used by the pi agent/harness core.
+
+Assess this approach vs other approaches. Recommend this approach, or some other approach. In doing your assessment, also search the web for additional knowledge about pi and approaches. Rely heavily on the included source code, but not exclusively.
+
+Then, whether you recommend this approach or not, do a thorough exploration and/or design of a system using this approach.
+
+If you are able to meaningfully actually run the pi software in your environment (despite not having an LLM to plug into it), actually create and test as much of a python library that has the pi agent harness as a core building block as you can, as an initial implementation. Create a thorough set of design documents, a journal of what you did, and an executive summary to help orient me to any artifact you produce.

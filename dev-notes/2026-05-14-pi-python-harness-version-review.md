@@ -15,20 +15,20 @@ Reviewer: Claude Opus 4.7. Date: 2026-05-14.
 > handshake was added, the `set_model` bug v5 inherited was fixed. See
 > `dev-notes/SESSION-STATE.md` for current state.
 
-The four PoC implementations live in a sibling workspace at
-`~/Downloads/pi_python_harness/`:
+The four PoC implementations are vendored at
+`dev-notes/predecessors/`:
 
-- `~/Downloads/pi_python_harness/version-1/pi_python_harness/`
-- `~/Downloads/pi_python_harness/version-2/pi_python_harness_artifacts/`
-- `~/Downloads/pi_python_harness/version-3/pi-python-harness/`
-- `~/Downloads/pi_python_harness/version-4/pi_python_harness/`
+- `dev-notes/predecessors/v1/` (originally `version-1/pi_python_harness/`)
+- `dev-notes/predecessors/v2/` (originally `version-2/pi_python_harness_artifacts/`)
+- `dev-notes/predecessors/v3/` (originally `version-3/pi-python-harness/`)
+- `dev-notes/predecessors/v4/` (originally `version-4/pi_python_harness/`)
 
 The prompt all four runs were given:
-`~/Downloads/pi_python_harness/prompt.txt`. Each run produced docs
+`dev-notes/predecessors/prompt.txt`. Each run produced docs
 (assessment, design, journal, executive summary), a Python library, a
 generated/embedded TypeScript shim, and a small test suite. The
-reference pi source the runs were given lives at
-`~/Downloads/pi_python_harness/pi-main/`.
+reference pi source the runs were given is reached via `links/pi/` (a
+symlink to the local pi checkout at `~/git/external/pi/`).
 
 ## Ground truth on pi
 
@@ -170,7 +170,7 @@ async-everywhere approach.
 The cleanest implementation overall. Two things stand out:
 
 1. **Uses pi-ai's real `registerFauxProvider` API** (verified at
-   `~/Downloads/pi_python_harness/pi-main/packages/ai/src/providers/faux.ts`) instead of hand-rolling
+   `links/pi/packages/ai/src/providers/faux.ts`) instead of hand-rolling
    event emission. Much less likely to break on pi upgrades.
 1. **The TS shim spawns the Python tool server as its own child process
    over stdio.** No TCP port, no localhost binding, no token-leak window —

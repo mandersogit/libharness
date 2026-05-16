@@ -5,6 +5,7 @@ local.venv/
 .sandbox/
 
 # Build
+# External-reference symlinks. `links/` holds per-developer symlinks
 build/
 dist/
 *.egg-info/

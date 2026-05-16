@@ -1,13 +1,13 @@
 ---
-status: "Reference"
-created: "2026-05-14"
+status: Reference
+created: '2026-05-14'
 ---
 
 # Pi internals — findings notes
 
 Reference notes from a co-design session investigating pi's internals. Captures what we verified in the source (with file:line citations) so future sessions don't re-derive these facts. **No decisions in this document.** Decisions live in `docs/DESIGN.md`.
 
-Pi source referenced throughout is the uploaded copy at `~/Downloads/pi_python_harness/pi-main/`.
+Pi source referenced throughout is reached via `links/pi/` (a symlink to the local pi checkout at `~/git/external/pi/`).
 
 ## Bridge transport (loopback TCP vs Unix domain socket)
 
@@ -22,7 +22,7 @@ Pi source referenced throughout is the uploaded copy at `~/Downloads/pi_python_h
 
 ### Why TCP and not UDS
 
-The choice was inherited from v5, which inherited it from v1. v1's design doc explicitly lists UDS as a future improvement (`~/Downloads/pi_python_harness/version-1/pi_python_harness/docs/DESIGN.md:207-208`). No artifact defended TCP over UDS.
+The choice was inherited from v5, which inherited it from v1. v1's design doc explicitly lists UDS as a future improvement (`dev-notes/predecessors/v1/docs/DESIGN.md:207-208`). No artifact defended TCP over UDS.
 
 ### Why we're keeping TCP for now
 
@@ -30,14 +30,14 @@ The token does the work that matters. Pi state corruption is not the threat — 
 
 Specific trade-offs we weighed:
 
-| | TCP + token | UDS + chmod 0600 |
-| --- | --- | --- |
-| Cross-process isolation | bearer-token rejection | filesystem permission |
-| Per-call latency | TCP handshake | meaningfully lower |
-| Path issues | none | macOS 104-char `sun_path` limit |
-| Windows | works | OK on Windows ≥10/1803 |
-| Debuggability | `lsof`, `nc 127.0.0.1 PORT` | `nc -U <path>` |
-| Cleanup on crash | TIME_WAIT eventually | tempdir removal sweeps it |
+|                         | TCP + token                 | UDS + chmod 0600                |
+| ----------------------- | --------------------------- | ------------------------------- |
+| Cross-process isolation | bearer-token rejection      | filesystem permission           |
+| Per-call latency        | TCP handshake               | meaningfully lower              |
+| Path issues             | none                        | macOS 104-char `sun_path` limit |
+| Windows                 | works                       | OK on Windows ≥10/1803          |
+| Debuggability           | `lsof`, `nc 127.0.0.1 PORT` | `nc -U <path>`                  |
+| Cleanup on crash        | TIME_WAIT eventually        | tempdir removal sweeps it       |
 
 The decisive factor: the bearer token already addresses the realistic local-process threat, and Windows support isn't in scope but is trivially preserved.
 
@@ -65,7 +65,7 @@ So: **multiple pi processes sharing `HOME` is fully supported**. Interactive mul
 These aren't races against pi state — they're about external resources:
 
 1. **OAuth callback port `1455`** during `/login`. Two simultaneous logins would collide. Login is rare and interactive.
-2. **Our bridge socket** is already per-harness-isolated (ephemeral port + random token + per-harness generated TS shim in per-harness tempdir). No collision.
+1. **Our bridge socket** is already per-harness-isolated (ephemeral port + random token + per-harness generated TS shim in per-harness tempdir). No collision.
 
 ## Session structure
 
@@ -100,10 +100,10 @@ A typical session JSONL is a **degenerate tree** — i.e., a linear chain. This 
 `fork()` (lines 1170-1239):
 
 1. Walk `getBranch(leafId)` to get the linear ancestor path.
-2. Create a new session file with a new `sessionId`.
-3. Write `[header, ...pathWithoutLabels, ...labelEntries]` into the new file.
-4. The header records `parentSession: previousSessionFile` (line 1190).
-5. New entries appended after the fork point go in the new file, parented to the copied-leaf entry.
+1. Create a new session file with a new `sessionId`.
+1. Write `[header, ...pathWithoutLabels, ...labelEntries]` into the new file.
+1. The header records `parentSession: previousSessionFile` (line 1190).
+1. New entries appended after the fork point go in the new file, parented to the copied-leaf entry.
 
 ```
 Old file:                    New file (after fork from M2):

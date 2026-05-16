@@ -58,6 +58,10 @@ libharness = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Belt-and-braces: testpaths already scopes collection to tests/, but
+# also explicitly ignore the vendored predecessor trees so a stray
+# `pytest dev-notes/...` invocation can't walk into them.
+norecursedirs = ["dev-notes", "links", ".sandbox", "local.venv", "local-ft.venv"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 markers = [
