@@ -9,27 +9,27 @@ Vendored snapshots of the **libharness v1–v5 proof-of-concept iterations** —
 
 ## Layout
 
-Each `v*/` directory mirrors the layout of the corresponding `~/Downloads/pi_python_harness/version-*` inner tree — the per-version source, tests, examples, `pyproject.toml`, README, and design docs.
+Each `v*/` directory mirrors the layout of the corresponding ChatGPT-authored package — the per-version source, tests, examples, `pyproject.toml`, README, and design docs.
 
 ```text
 dev-notes/predecessors/
-├── README.md          (this file)
-├── prompt.txt         (the prompt that drove all four AI runs)
-├── v1/                version-1/pi_python_harness/
-├── v2/                version-2/pi_python_harness_artifacts/
-├── v3/                version-3/pi-python-harness/
-├── v4/                version-4/pi_python_harness/
-└── v5-synthesis/      version-5-synthesis/pi-python-harness-synthesis/
-       ├── docs/        original docs/ — design, journal, audit, etc.
-       ├── examples/
-       ├── src/         (or pi_python_harness/ at top level, in v2)
-       ├── tests/
-       ├── pyproject.toml
-       ├── README.md    (was the source-tree README)
-       └── …
+├── README.md                    (this file)
+├── prompt.txt                   (the prompt that drove the v1–v4 runs)
+├── v1/                          version-1/pi_python_harness/
+├── v2/                          version-2/pi_python_harness_artifacts/
+├── v3/                          version-3/pi-python-harness/
+├── v4/                          version-4/pi_python_harness/
+├── v5-synthesis/                version-5-synthesis/pi-python-harness-synthesis/
+├── v6-threaded/                 thread-owned reshaping of v5 (asyncio in dedicated thread)
+├── v7-threaded-agent-hooks/     v6 + Agent class with notification hooks (10 events)
+└── v8-decision-hooks/           v7 + decision hooks for all 19 participation events
 ```
 
-Total size on disk: ~1.3 MB.
+v1–v5 were the original Pi-harness exploration (2026-05-14 era). v6–v8 are 2026-05-17 follow-on revisions from the same ChatGPT 5.5 Pro Extended Thinking conversation, vendored as we received them. Each `vN+1` builds on `vN` rather than being an independent synthesis. The `vN-threaded-agent-hooks`-style names describe the substantive addition; the underlying conversation thread is preserved at `<dir>/prompt-sequence.md` where present.
+
+The v6 → v7 → v8 chain is the "asyncio-in-thread direction" we're adopting (or planning to adopt) for `src/libharness/pi/`. The v6-as-base discussion lives at `dev-notes/2026-05-17-v6-as-base-direction.md`; per-version analyses at `dev-notes/2026-05-17-v{6,7,8}-*.md`.
+
+Total size on disk: ~5 MB (v1–v8 combined).
 
 ## What's intentionally NOT here
 

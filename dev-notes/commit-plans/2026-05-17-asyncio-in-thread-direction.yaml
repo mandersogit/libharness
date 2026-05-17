@@ -1,0 +1,245 @@
+repo: .
+
+commits:
+  - message: |
+      docs: v6 retrospective + asyncio-in-thread direction exploration
+
+      Vendor v6-threaded as a follow-on ChatGPT-authored predecessor at
+      `dev-notes/predecessors/v6-threaded/`. v6 is the thread-owned
+      reshaping that came back after the v5 synthesis — keeps the asyncio
+      core but wraps it in a `HarnessRuntime` with a dedicated loop thread
+      and a `PiAgentHarness` proxy for sync caller access.
+
+      Two new design docs:
+
+        - `2026-05-17-v6-threaded-comparison.md` — analysis of v6 vs the
+          current v5-port + 2026-05-15 threads-rewrite plan. Identifies
+          v6 as exactly the option B ("sync facade over async core") that
+          the concurrency-model discussion explicitly rejected, plus the
+          deltas we'd carry forward (set_model fix, protocolVersion).
+
+        - `2026-05-17-v6-as-base-direction.md` — proposes treating v6 as
+          a forward direction, not just a historical artifact. The `on_*`
+          hooks color problem is solvable under v6 by calling a sync
+          handler from inside `async def _dispatch_event` (or via
+          `run_in_executor`); pi-side asynchrony stays intact. Includes
+          H1/H2/H3 dispatch sketches plus MCA/MCA-D evolutions, the
+          hook-naming co-design that fed the v7 request.
+
+      This is the start of a direction shift. The 2026-05-15
+      threads-rewrite plan ("primarily D" — threads end-to-end, FT-first)
+      is still ready-for-implementation on spark, but this branch
+      (`asyncio-in-thread`) explores the alternative. Decision register
+      in `docs/DESIGN.md` not yet updated; supersession happens when the
+      v8 port lands.
+    files:
+      - dev-notes/2026-05-17-v6-threaded-comparison.md
+      - dev-notes/2026-05-17-v6-as-base-direction.md
+      - dev-notes/predecessors/v6-threaded/docs/AUDIT_REPORT.md
+      - dev-notes/predecessors/v6-threaded/docs/BEST_PRACTICES.md
+      - dev-notes/predecessors/v6-threaded/docs/DESIGN.md
+      - dev-notes/predecessors/v6-threaded/docs/IMPLEMENTATION_JOURNAL.md
+      - dev-notes/predecessors/v6-threaded/docs/RUN_RESULTS.md
+      - dev-notes/predecessors/v6-threaded/docs/SOURCE_FINDINGS.md
+      - dev-notes/predecessors/v6-threaded/docs/THREADING_MODEL.md
+      - dev-notes/predecessors/v6-threaded/examples/basic.py
+      - dev-notes/predecessors/v6-threaded/LICENSE
+      - dev-notes/predecessors/v6-threaded/prompt-sequence.md
+      - dev-notes/predecessors/v6-threaded/pyproject.toml
+      - dev-notes/predecessors/v6-threaded/README.md
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/agent.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/cli.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/harness.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/jsonl.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/py.typed
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/rpc.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/runtime.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/server.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/shim.py
+      - dev-notes/predecessors/v6-threaded/src/pi_python_harness/tools.py
+      - dev-notes/predecessors/v6-threaded/tests/fake_pi_rpc.py
+      - dev-notes/predecessors/v6-threaded/tests/test_jsonl.py
+      - dev-notes/predecessors/v6-threaded/tests/test_real_pi_integration.py
+      - dev-notes/predecessors/v6-threaded/tests/test_rpc_fake.py
+      - dev-notes/predecessors/v6-threaded/tests/test_server.py
+      - dev-notes/predecessors/v6-threaded/tests/test_threaded_agent.py
+      - dev-notes/predecessors/v6-threaded/tests/test_tools.py
+
+  - message: |
+      docs: v7 follow-on (Agent class with notification hooks) + analysis
+
+      Send a v7 request to ChatGPT building on v6: add an `Agent` class
+      with `on_X` / `async_on_X` hooks for the 10 core agent-loop events
+      (MCA-D pattern — parallel sync/async methods, declared on the base
+      class with `None` defaults, `__init_subclass__` validation for
+      both-defined collisions and typo'd hook names). Result vendored at
+      `dev-notes/predecessors/v7-threaded-agent-hooks/`.
+
+      Three new design docs:
+
+        - `2026-05-17-v7-request.md` — the prompt sent to ChatGPT,
+          framed as a conversational follow-on (no internal "v7" label;
+          ChatGPT sees this as just the next turn in its thread).
+
+        - `2026-05-17-v7-analysis.md` — analysis of what ChatGPT
+          produced. 18 tests passing, mypy/pyright/ruff clean. All
+          locked decisions honored. Six minor items A–F flagged for
+          discussion before port.
+
+        - `2026-05-17-v7-event-verification.md` — verifies v7's
+          `_EVENT_NAMES` against pi-mono source. v7's 10 names are all
+          correct; 7 session-layer events are missing; 2 RPC envelope
+          events not modeled. Establishes the three-surface framing
+          (notification / participation / RPC envelope) that drove the
+          v8 design. Includes a scope-correction section owning the
+          earlier framing of "Agent is notification-only" as a unilateral
+          call that was superseded by the author's clarified direction
+          (participate in 100% of events; expensive ones opt-in).
+    files:
+      - dev-notes/2026-05-17-v7-request.md
+      - dev-notes/2026-05-17-v7-analysis.md
+      - dev-notes/2026-05-17-v7-event-verification.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/AGENT_HOOKS.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/AUDIT_REPORT.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/BEST_PRACTICES.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/DESIGN.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/IMPLEMENTATION_JOURNAL.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/RUN_RESULTS.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/SOURCE_FINDINGS.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/docs/THREADING_MODEL.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/examples/basic.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/LICENSE
+      - dev-notes/predecessors/v7-threaded-agent-hooks/pyproject.toml
+      - dev-notes/predecessors/v7-threaded-agent-hooks/README.md
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/agent_class.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/agent.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/cli.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/harness.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/jsonl.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/py.typed
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/rpc.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/runtime.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/server.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/shim.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/src/pi_python_harness/tools.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/fake_pi_rpc.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_agent_class.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_jsonl.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_real_pi_integration.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_rpc_fake.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_server.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_set_model.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_threaded_agent.py
+      - dev-notes/predecessors/v7-threaded-agent-hooks/tests/test_tools.py
+
+  - message: |
+      docs: v8 follow-on (decision hooks + opt-in participation) + handoff
+
+      Final ChatGPT pass in this exploration: add decision hooks
+      (`decide_X` / `async_decide_X`) for all 19 of pi's participation
+      events, with the subscribe-to-all + always-notify + gated-decide
+      architecture. The TS shim subscribes to every participation event
+      at extension load and picks per-fire between fire-and-forget
+      (gate closed) and sync round-trip (gate open). One bridge call
+      per fire either way; Python is always notified, pi only blocks
+      when a `decide_X` is declared. Result vendored at
+      `dev-notes/predecessors/v8-decision-hooks/`. 36 tests passing.
+
+      Includes `agent_class_mca.py` alongside `agent_class.py` — the
+      former is an in-tree post-review refinement extracting the 74
+      hook ClassVar declarations into an `AgentHookSurface` mixin so
+      the Agent class body is just dispatch logic + lifecycle. The
+      four-quadrant hook ordering (sync notification / sync decision /
+      async notification / async decision) lets sync-only users read
+      half the file as relevant and ignore the other half.
+
+      Three new design docs:
+
+        - `2026-05-17-v8-request-notes.md` — working notes that became
+          the v8 prompt. Captures the design conversation: gated
+          handler model, method-existence opt-in trigger, raw-dict
+          result shape, no-default-timeout posture, channel separation
+          (decision events visible only via Agent hooks, not via
+          `client.on_event`).
+
+        - `2026-05-17-v8-request.md` — the prompt sent to ChatGPT.
+          14 locked decisions; 12 specific test asks; per-event
+          return-shape table to read from pi source; out-of-scope list.
+
+        - `2026-05-17-v8-analysis.md` — analysis of what ChatGPT
+          produced. All locked decisions honored. One real gap
+          surfaced: 38 missing `on_X` / `async_on_X` declarations for
+          decision events (validation accepts them; the slots aren't
+          declared). Documents the in-tree post-review refinements
+          (mixin extraction, four-quadrant ordering) and resolves all
+          open questions:
+            - Adopt v8 as the libharness baseline.
+            - `AgentHookSurface` stays public (no leading underscore).
+            - `PiPythonHarness` async surface stays for v1 of the port.
+            - Items C (strict-mode end-to-end test) + E
+              (`subscribe_client_events` simplification) addressed
+              during port; A, B, D, F deferred.
+            - Port adopts the 3-file split: `events.py` +
+              `hook_surface.py` + `agent_class.py`.
+          The port itself executes in the spark environment (which has
+          codex-cli adversarial review), not in this checkout.
+
+      Handoff updates:
+
+        - `dev-notes/SESSION-STATE.md` rewritten for the direction
+          shift. Captures the two parallel branches
+          (`asyncio-in-thread` here; `threads-rewrite` on spark), the
+          v6/v7/v8 progression, the locked decisions, the deferred
+          items, and the new pending-tasks list anchored on the
+          spark-side port.
+
+        - `dev-notes/predecessors/README.md` updated to list v6/v7/v8
+          alongside v1-v5, with the convention that vN+1 builds on vN
+          (not independent syntheses).
+    files:
+      - dev-notes/2026-05-17-v8-request-notes.md
+      - dev-notes/2026-05-17-v8-request.md
+      - dev-notes/2026-05-17-v8-analysis.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/predecessors/README.md
+      - dev-notes/commit-plans/2026-05-17-asyncio-in-thread-direction.yaml
+      - dev-notes/predecessors/v8-decision-hooks/docs/AGENT_HOOKS.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/AUDIT_REPORT.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/BEST_PRACTICES.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/DESIGN.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/IMPLEMENTATION_JOURNAL.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/RUN_RESULTS.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/SOURCE_FINDINGS.md
+      - dev-notes/predecessors/v8-decision-hooks/docs/THREADING_MODEL.md
+      - dev-notes/predecessors/v8-decision-hooks/examples/basic.py
+      - dev-notes/predecessors/v8-decision-hooks/examples/permission_gate.py
+      - dev-notes/predecessors/v8-decision-hooks/LICENSE
+      - dev-notes/predecessors/v8-decision-hooks/pyproject.toml
+      - dev-notes/predecessors/v8-decision-hooks/README.md
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/__init__.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/agent_class_mca.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/agent_class.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/agent.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/cli.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/harness.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/jsonl.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/py.typed
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/rpc.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/runtime.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/server.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/shim.py
+      - dev-notes/predecessors/v8-decision-hooks/src/pi_python_harness/tools.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/fake_pi_rpc.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_agent_class.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_channel_separation.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_decision_hooks.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_jsonl.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_pi_event_taxonomy.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_real_pi_integration.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_rpc_fake.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_server.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_set_model.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_threaded_agent.py
+      - dev-notes/predecessors/v8-decision-hooks/tests/test_tools.py
