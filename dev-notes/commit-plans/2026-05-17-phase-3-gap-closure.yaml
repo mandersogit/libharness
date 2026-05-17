@@ -1,0 +1,43 @@
+repo: .
+
+commits:
+  - message: |
+      feat(pi): declare observation hooks for decision events
+
+      Phase 3 of the v8 port plan. Closes the 38-declaration gap
+      surfaced in dev-notes/2026-05-17-v8-analysis.md § Gap: v8's
+      AgentHookSurface declared only `decide_X` and `async_decide_X` for
+      the 19 decision events, even though the dispatcher and validation
+      accepted observation-style `on_X` / `async_on_X` for the same
+      events (via the `_OBSERVABLE_EVENT_NAMES = _EVENT_NAMES |
+      _DECISION_EVENT_NAMES` union).
+
+      The mechanism worked, but IDE autocomplete couldn't suggest
+      `on_tool_call` etc., and type-checkers didn't recognize subclass
+      overrides as overrides.
+
+      This commit adds the 38 missing ClassVars: for each of the 19
+      `_DECISION_EVENT_NAMES`, both `on_<event>: ClassVar[SyncAgentHook
+      | None] = None` and `async_on_<event>: ClassVar[AsyncAgentHook |
+      None] = None`. Placed at the end of the sync-notification and
+      async-notification quadrants respectively, in the same logical
+      order as `_DECISION_EVENT_NAMES` itself (resources_discover,
+      session_*, context, before/after_provider_*, before_agent_start,
+      model_select, thinking_level_select, tool_call, tool_result,
+      user_bash, input).
+
+      Final ClassVar count on `AgentHookSurface`: 112
+      (37 on_* + 37 async_on_* + 19 decide_* + 19 async_decide_*).
+      Matches the 112-declaration target from the analysis doc.
+
+      No semantic change — the dispatcher already accepted these as
+      valid hook names via the observable-events union. The declarative
+      surface now matches the contracted one.
+
+      Acceptance:
+
+        - AgentHookSurface ClassVar count: 112, verified at import time.
+        - `make all` green on local.venv (3.11) and local-ft.venv (3.14t).
+    files:
+      - src/libharness/pi/agent_class.py
+      - dev-notes/commit-plans/2026-05-17-phase-3-gap-closure.yaml
