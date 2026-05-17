@@ -1,0 +1,47 @@
+repo: .
+
+commits:
+  - message: |
+      refactor(pi): extract AgentHookSurface mixin from Agent class
+
+      Phase 2 of the v8 port plan. Swaps src/libharness/pi/agent_class.py
+      from v8's original layout to the `agent_class_mca.py` variant the
+      author refactored into in-tree post-v8 review.
+
+      Two organizational changes vs Phase 1's vendor:
+
+      - Declarative hook surface (74 ClassVars + 4 frozensets + config
+        attrs + 4 hook type aliases) extracted into a new
+        `AgentHookSurface` class. `Agent` inherits as
+        `class Agent(AgentHookSurface, PiAgentHarness)`. The validation
+        classmethods (`_validate_declared_hook_names`,
+        `_validate_effective_hook_collisions`,
+        `_validate_decision_timeouts`) move to the mixin too — they
+        only read class-level state from the surface they validate.
+
+      - Hook declarations reorganized into four colocated blocks rather
+        than interleaved: sync notification → sync decision → async
+        notification → async decision. Each block gets a single-line
+        comment header. A user picks one flavor (sync or async) and
+        reads half the file as relevant; the other half is invisible
+        noise. Mutual-exclusivity (don't define both `on_X` and
+        `async_on_X` for the same event) stays enforced via
+        `_validate_effective_hook_collisions`.
+
+      AgentHookSurface is public (no leading underscore) per author
+      resolution #2 in dev-notes/2026-05-17-v8-analysis.md § Resolutions.
+      It is NOT yet re-exported from __init__.py — Phase 4's three-file
+      split is where the import surface gets reorganized.
+
+      Acceptance verified:
+
+        - MRO: [Agent, AgentHookSurface, PiAgentHarness, object].
+        - Hook ClassVar count on AgentHookSurface: 74 (matches v8;
+          Phase 3 closes the gap to 112).
+        - `make all` green on local.venv (3.11) and local-ft.venv (3.14t).
+
+      Ruff version-skew (continuation of Phase 1's pattern): 2 issues
+      surfaced in the mca file, both auto-fixed. No semantic change.
+    files:
+      - src/libharness/pi/agent_class.py
+      - dev-notes/commit-plans/2026-05-17-phase-2-mixin-refinement.yaml

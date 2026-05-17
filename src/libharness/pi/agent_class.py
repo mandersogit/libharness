@@ -81,21 +81,7 @@ AsyncDecisionHook = Callable[..., Awaitable[object | None]]
 SyncDecisionHook = Callable[..., object | None]
 
 
-class Agent(PiAgentHarness):
-    """Subclassable synchronous Pi harness with notification and decision hooks.
-
-    Users normally subclass ``Agent`` and override either ``async_on_<event>`` or
-    ``on_<event>`` for events they want to observe. Asynchronous notification hooks
-    run on the shared runtime asyncio loop thread. Synchronous notification hooks
-    run on the runtime's dedicated single-worker hook executor; their return values
-    are discarded.
-
-    For Pi's in-process extension event surface, subclasses override exactly one
-    of ``async_decide_<event>`` or ``decide_<event>``. The method's existence opens
-    the corresponding bridge gate at extension load time. Decision hook return
-    values are raw Python values that must match Pi's TypeScript event result
-    shape; ``None`` means no opinion.
-    """
+class AgentHookSurface:
 
     _EVENT_NAMES: ClassVar[frozenset[str]] = frozenset(
         {
@@ -149,81 +135,100 @@ class Agent(PiAgentHarness):
     _decision_timeout_ms: ClassVar[int | None] = None
     _decision_timeouts_ms: ClassVar[dict[str, int]] = {}
 
-    async_on_agent_start: ClassVar[AsyncAgentHook | None] = None
     on_agent_start: ClassVar[SyncAgentHook | None] = None
-    async_on_agent_end: ClassVar[AsyncAgentHook | None] = None
     on_agent_end: ClassVar[SyncAgentHook | None] = None
-    async_on_turn_start: ClassVar[AsyncAgentHook | None] = None
     on_turn_start: ClassVar[SyncAgentHook | None] = None
-    async_on_turn_end: ClassVar[AsyncAgentHook | None] = None
     on_turn_end: ClassVar[SyncAgentHook | None] = None
-    async_on_message_start: ClassVar[AsyncAgentHook | None] = None
     on_message_start: ClassVar[SyncAgentHook | None] = None
-    async_on_message_update: ClassVar[AsyncAgentHook | None] = None
     on_message_update: ClassVar[SyncAgentHook | None] = None
-    async_on_message_end: ClassVar[AsyncAgentHook | None] = None
     on_message_end: ClassVar[SyncAgentHook | None] = None
-    async_on_tool_execution_start: ClassVar[AsyncAgentHook | None] = None
     on_tool_execution_start: ClassVar[SyncAgentHook | None] = None
-    async_on_tool_execution_update: ClassVar[AsyncAgentHook | None] = None
     on_tool_execution_update: ClassVar[SyncAgentHook | None] = None
-    async_on_tool_execution_end: ClassVar[AsyncAgentHook | None] = None
     on_tool_execution_end: ClassVar[SyncAgentHook | None] = None
-    async_on_queue_update: ClassVar[AsyncAgentHook | None] = None
     on_queue_update: ClassVar[SyncAgentHook | None] = None
-    async_on_compaction_start: ClassVar[AsyncAgentHook | None] = None
     on_compaction_start: ClassVar[SyncAgentHook | None] = None
-    async_on_compaction_end: ClassVar[AsyncAgentHook | None] = None
     on_compaction_end: ClassVar[SyncAgentHook | None] = None
-    async_on_session_info_changed: ClassVar[AsyncAgentHook | None] = None
     on_session_info_changed: ClassVar[SyncAgentHook | None] = None
-    async_on_thinking_level_changed: ClassVar[AsyncAgentHook | None] = None
     on_thinking_level_changed: ClassVar[SyncAgentHook | None] = None
-    async_on_auto_retry_start: ClassVar[AsyncAgentHook | None] = None
     on_auto_retry_start: ClassVar[SyncAgentHook | None] = None
-    async_on_auto_retry_end: ClassVar[AsyncAgentHook | None] = None
     on_auto_retry_end: ClassVar[SyncAgentHook | None] = None
-    async_on_extension_error: ClassVar[AsyncAgentHook | None] = None
     on_extension_error: ClassVar[SyncAgentHook | None] = None
 
-    async_decide_resources_discover: ClassVar[AsyncDecisionHook | None] = None
     decide_resources_discover: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_start: ClassVar[AsyncDecisionHook | None] = None
     decide_session_start: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_before_switch: ClassVar[AsyncDecisionHook | None] = None
     decide_session_before_switch: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_before_fork: ClassVar[AsyncDecisionHook | None] = None
     decide_session_before_fork: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_before_compact: ClassVar[AsyncDecisionHook | None] = None
     decide_session_before_compact: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_compact: ClassVar[AsyncDecisionHook | None] = None
     decide_session_compact: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_shutdown: ClassVar[AsyncDecisionHook | None] = None
     decide_session_shutdown: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_before_tree: ClassVar[AsyncDecisionHook | None] = None
     decide_session_before_tree: ClassVar[SyncDecisionHook | None] = None
-    async_decide_session_tree: ClassVar[AsyncDecisionHook | None] = None
     decide_session_tree: ClassVar[SyncDecisionHook | None] = None
-    async_decide_context: ClassVar[AsyncDecisionHook | None] = None
     decide_context: ClassVar[SyncDecisionHook | None] = None
-    async_decide_before_provider_request: ClassVar[AsyncDecisionHook | None] = None
     decide_before_provider_request: ClassVar[SyncDecisionHook | None] = None
-    async_decide_after_provider_response: ClassVar[AsyncDecisionHook | None] = None
     decide_after_provider_response: ClassVar[SyncDecisionHook | None] = None
-    async_decide_before_agent_start: ClassVar[AsyncDecisionHook | None] = None
     decide_before_agent_start: ClassVar[SyncDecisionHook | None] = None
-    async_decide_model_select: ClassVar[AsyncDecisionHook | None] = None
     decide_model_select: ClassVar[SyncDecisionHook | None] = None
-    async_decide_thinking_level_select: ClassVar[AsyncDecisionHook | None] = None
     decide_thinking_level_select: ClassVar[SyncDecisionHook | None] = None
-    async_decide_tool_call: ClassVar[AsyncDecisionHook | None] = None
     decide_tool_call: ClassVar[SyncDecisionHook | None] = None
-    async_decide_tool_result: ClassVar[AsyncDecisionHook | None] = None
     decide_tool_result: ClassVar[SyncDecisionHook | None] = None
-    async_decide_user_bash: ClassVar[AsyncDecisionHook | None] = None
     decide_user_bash: ClassVar[SyncDecisionHook | None] = None
-    async_decide_input: ClassVar[AsyncDecisionHook | None] = None
     decide_input: ClassVar[SyncDecisionHook | None] = None
+
+    async_on_agent_start: ClassVar[AsyncAgentHook | None] = None
+    async_on_agent_end: ClassVar[AsyncAgentHook | None] = None
+    async_on_turn_start: ClassVar[AsyncAgentHook | None] = None
+    async_on_turn_end: ClassVar[AsyncAgentHook | None] = None
+    async_on_message_start: ClassVar[AsyncAgentHook | None] = None
+    async_on_message_update: ClassVar[AsyncAgentHook | None] = None
+    async_on_message_end: ClassVar[AsyncAgentHook | None] = None
+    async_on_tool_execution_start: ClassVar[AsyncAgentHook | None] = None
+    async_on_tool_execution_update: ClassVar[AsyncAgentHook | None] = None
+    async_on_tool_execution_end: ClassVar[AsyncAgentHook | None] = None
+    async_on_queue_update: ClassVar[AsyncAgentHook | None] = None
+    async_on_compaction_start: ClassVar[AsyncAgentHook | None] = None
+    async_on_compaction_end: ClassVar[AsyncAgentHook | None] = None
+    async_on_session_info_changed: ClassVar[AsyncAgentHook | None] = None
+    async_on_thinking_level_changed: ClassVar[AsyncAgentHook | None] = None
+    async_on_auto_retry_start: ClassVar[AsyncAgentHook | None] = None
+    async_on_auto_retry_end: ClassVar[AsyncAgentHook | None] = None
+    async_on_extension_error: ClassVar[AsyncAgentHook | None] = None
+
+    async_decide_resources_discover: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_start: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_before_switch: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_before_fork: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_before_compact: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_compact: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_shutdown: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_before_tree: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_session_tree: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_context: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_before_provider_request: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_after_provider_response: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_before_agent_start: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_model_select: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_thinking_level_select: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_tool_call: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_tool_result: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_user_bash: ClassVar[AsyncDecisionHook | None] = None
+    async_decide_input: ClassVar[AsyncDecisionHook | None] = None
+
+
+class Agent(AgentHookSurface, PiAgentHarness):
+    """Subclassable synchronous Pi harness with notification and decision hooks.
+
+    Users normally subclass ``Agent`` and override either ``async_on_<event>`` or
+    ``on_<event>`` for events they want to observe. Asynchronous notification hooks
+    run on the shared runtime asyncio loop thread. Synchronous notification hooks
+    run on the runtime's dedicated single-worker hook executor; their return values
+    are discarded.
+
+    For Pi's in-process extension event surface, subclasses override exactly one
+    of ``async_decide_<event>`` or ``decide_<event>``. The method's existence opens
+    the corresponding bridge gate at extension load time. Decision hook return
+    values are raw Python values that must match Pi's TypeScript event result
+    shape; ``None`` means no opinion.
+    """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
