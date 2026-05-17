@@ -232,7 +232,12 @@ class PythonToolServer:
     ) -> None:
         tool_name = str(request.get("tool", ""))
         tool_call_id = str(request.get("toolCallId") or request.get("id") or "python-tool-call")
-        params = request.get("params") or {}
+        # Don't use `or {}` to default missing params — that silently coerces
+        # falsy non-dict values ([], 0, "", False) into {} before the isinstance
+        # check runs. Treat missing / None as {} and reject everything else.
+        params = request.get("params", {})
+        if params is None:
+            params = {}
         if not isinstance(params, dict):
             raise ToolError("execute.params must be an object")
 

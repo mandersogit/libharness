@@ -176,10 +176,33 @@ class PiRpcClient:
         self._stderr_task = asyncio.create_task(self._read_stderr_loop(), name="pi-rpc-stderr")
         await asyncio.sleep(min(0.2, max(0.0, self.config.startup_timeout)))
         if self.process.returncode is not None:
+            # Pi exited during startup. Clean up the two reader tasks and the
+            # subprocess handle before raising — otherwise the tasks live on
+            # against a dead process, leaking into the loop's task set and
+            # surfacing as warnings (or hangs at loop teardown) downstream.
+            await self._cleanup_after_startup_failure()
             raise PiRpcProcessError(
                 "Pi exited during startup with code "
                 f"{self.process.returncode}. stderr={self.stderr!r}"
             )
+
+    async def _cleanup_after_startup_failure(self) -> None:
+        """Best-effort teardown when the startup probe finds pi already exited."""
+        self._closed = True
+        proc = self.process
+        if proc is not None and proc.stdin and not proc.stdin.is_closing():
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError, RuntimeError):
+                proc.stdin.close()
+        reader_tasks = [t for t in (self._reader_task, self._stderr_task) if t is not None]
+        for task in reader_tasks:
+            task.cancel()
+        if reader_tasks:
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+        self._reader_task = None
+        self._stderr_task = None
+        if proc is not None:
+            with contextlib.suppress(asyncio.TimeoutError, ProcessLookupError):
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
 
     async def close(self) -> None:
         self._closed = True
@@ -406,8 +429,12 @@ class PiRpcClient:
             response = await maybe if inspect.isawaitable(maybe) else maybe
         if response is None:
             response = self._default_ui_response(method)
+        # Framework keys (type, id) must override anything the handler returns.
+        # Spreading response first ensures the dict-literal evaluation order
+        # gives the framework the last word; otherwise a handler returning
+        # {"id": ...} would silently corrupt the correlation id seen by pi.
         await self._send_extension_ui_response(
-            {"type": "extension_ui_response", "id": request_id, **response}
+            {**response, "type": "extension_ui_response", "id": request_id}
         )
 
     def _default_ui_response(self, method: str) -> JsonObject:

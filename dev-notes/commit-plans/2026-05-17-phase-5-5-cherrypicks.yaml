@@ -1,0 +1,101 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): cherry-pick three v8 bugs surfaced in threads-rewrite review
+
+      Phase 5.5 of the v8 port plan. Three pre-identified bugs the
+      threads-rewrite Claude caught during its phase 2-3 adversarial
+      reviews on the parallel branch (origin/threads-rewrite). Each
+      verified against v8 source at the cited line:line and now fixed
+      with a regression test.
+
+      Sources:
+
+        - dev-notes/2026-05-17-claude-recommendations-for-v8-port.md
+          Checks 1, 4, 7.
+        - origin/threads-rewrite synthesis docs (sibling checkout
+          ../libharness/dev-notes/2026-05-16-threads-rewrite-plan-
+          phase{2,3}-review-synthesis.md).
+
+      ## Fixes
+
+      ### Check 1 (CRITICAL) — rpc.py extension_ui_response frame
+
+      Pre-fix wire construction at the UI response site was
+
+        {"type": "extension_ui_response", "id": request_id, **response}
+
+      The dict-literal `**unpack` is left-to-right with later keys
+      overriding earlier ones. A UI handler returning `{"id": "EVIL"}`
+      or `{"type": "evil-type"}` therefore silently corrupted pi's
+      correlation id or frame type. Fix: spread the handler response
+      first so the framework keys win.
+
+        {**response, "type": "extension_ui_response", "id": request_id}
+
+      Inline comment explains the eval-order constraint.
+
+      ### Check 4 (HIGH) — server.py execute.params falsy coercion
+
+      Pre-fix code at the execute dispatch was
+
+        params = request.get("params") or {}
+        if not isinstance(params, dict):
+            raise ToolError(...)
+
+      The `or {}` coerced every falsy non-dict value — `[]`, `0`, `""`,
+      `False` — to an empty dict before the isinstance check could see
+      it. Malformed clients silently dispatched tools with empty
+      params. Fix: use a default value on `.get()` plus an explicit
+      None-check, then run the isinstance gate.
+
+        params = request.get("params", {})
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            raise ToolError("execute.params must be an object")
+
+      ### Check 7 (MODERATE) — rpc.py startup-probe leak
+
+      Pre-fix code raised `PiRpcProcessError` immediately if the probe
+      detected pi already exited, leaving the two reader tasks
+      (`_reader_task`, `_stderr_task`) running against a dead process
+      and the subprocess handle unreaped. Fix: factor the cleanup into
+      a new helper `_cleanup_after_startup_failure()` that closes
+      stdin, cancels both reader tasks, awaits them via
+      `asyncio.gather(return_exceptions=True)`, resets the task slots
+      to None, and reaps the subprocess with a short timeout — all
+      before re-raising.
+
+      ## Regression tests (new file)
+
+      tests/pi/test_v8_cherrypick_fixes.py adds three tests (six cases
+      counting parametrization):
+
+        - test_extension_ui_response_framework_keys_win — constructs a
+          PiRpcClient, monkeypatches the wire-write, installs a
+          handler returning {"id": "EVIL", "type": "evil-type", ...},
+          asserts the framework keys win in the captured frame.
+
+        - test_execute_params_rejects_non_dict_falsy_values (parametrized
+          on [], 0, "", False) — sends each via the real PythonToolServer
+          wire protocol, asserts an error response with "params must be
+          an object" surfaces.
+
+        - test_startup_probe_cleanup_on_pi_exit — launches a pi command
+          that exits 1 immediately, asserts PiRpcProcessError raises
+          AND `_reader_task` / `_stderr_task` are None (cleanup ran)
+          AND `process.returncode is not None` (subprocess reaped).
+
+      ## Acceptance
+
+        - All 6 new test cases pass on local.venv (3.11) and
+          local-ft.venv (3.14t).
+        - Existing 7 unit tests still pass (13 total).
+        - Ruff / mypy / pyright clean.
+    files:
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/server.py
+      - tests/pi/test_v8_cherrypick_fixes.py
+      - dev-notes/commit-plans/2026-05-17-phase-5-5-cherrypicks.yaml
