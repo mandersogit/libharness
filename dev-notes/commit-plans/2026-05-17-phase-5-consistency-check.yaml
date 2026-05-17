@@ -1,0 +1,44 @@
+repo: .
+
+commits:
+  - message: |
+      feat(pi): assert hook-surface declarations match event sets at import time
+
+      Phase 5 of the v8 port plan. Adds a module-level
+      `_assert_declarations_match_event_sets()` helper to
+      `src/libharness/pi/hook_surface.py` that runs on
+      `AgentHookSurface` at import time.
+
+      Checks:
+
+        - Every name in `_EVENT_NAMES | _DECISION_EVENT_NAMES` has both
+          `on_<event>` and `async_on_<event>` declared on
+          `AgentHookSurface.__dict__`.
+        - Every name in `_DECISION_EVENT_NAMES` additionally has both
+          `decide_<event>` and `async_decide_<event>` declared.
+        - No orphan `on_*` / `async_on_*` ClassVars exist for event
+          names NOT in the observable union.
+        - No orphan `decide_*` / `async_decide_*` ClassVars exist for
+          event names NOT in the decision set.
+
+      Drift between the frozensets and the ~112 literal declarations
+      now becomes a load-time `AssertionError` with a structured
+      message naming what's missing or orphaned.
+
+      Verified by mutating `AgentHookSurface._EVENT_NAMES` to add a
+      fake event, calling the helper, and confirming an
+      `AssertionError` is raised that names `fake_drift_event` in the
+      missing-observation-ClassVars list.
+
+      Acceptance:
+
+        - `from libharness.pi.hook_surface import AgentHookSurface` runs
+          cleanly (consistency check passes on the real surface).
+        - `make all` green on local.venv (3.11) and local-ft.venv (3.14t).
+
+      The helper is module-level (not a classmethod) and prefixed with
+      an underscore: it is an internal invariant guard, not part of the
+      hook author's API surface.
+    files:
+      - src/libharness/pi/hook_surface.py
+      - dev-notes/commit-plans/2026-05-17-phase-5-consistency-check.yaml

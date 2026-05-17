@@ -275,3 +275,47 @@ class AgentHookSurface:
                 raise TypeError(
                     f"{cls.__name__}._decision_timeouts_ms[{event_name!r}] must be positive"
                 )
+
+
+def _assert_declarations_match_event_sets(cls: type[AgentHookSurface]) -> None:
+    """Pin the invariant that ``AgentHookSurface``'s hook ClassVars match the event sets.
+
+    Runs on the base ``AgentHookSurface`` at import time. Future drift — adding a name
+    to ``_EVENT_NAMES`` or ``_DECISION_EVENT_NAMES`` without adding the matching
+    ClassVar declarations, or vice versa — becomes a load-time failure rather than a
+    runtime mystery.
+    """
+    declared = {n for n in cls.__dict__ if n.startswith(("on_", "async_on_"))}
+    declared_decision = {n for n in cls.__dict__ if n.startswith(("decide_", "async_decide_"))}
+
+    expected_obs: set[str] = set()
+    for event_name in cls._EVENT_NAMES | cls._DECISION_EVENT_NAMES:
+        expected_obs.add(f"on_{event_name}")
+        expected_obs.add(f"async_on_{event_name}")
+    expected_decision: set[str] = set()
+    for event_name in cls._DECISION_EVENT_NAMES:
+        expected_decision.add(f"decide_{event_name}")
+        expected_decision.add(f"async_decide_{event_name}")
+
+    missing_obs = expected_obs - declared
+    extra_obs = declared - expected_obs
+    missing_decision = expected_decision - declared_decision
+    extra_decision = declared_decision - expected_decision
+
+    problems: list[str] = []
+    if missing_obs:
+        problems.append(f"missing observation ClassVars: {sorted(missing_obs)}")
+    if extra_obs:
+        problems.append(f"orphan observation ClassVars (no matching event): {sorted(extra_obs)}")
+    if missing_decision:
+        problems.append(f"missing decision ClassVars: {sorted(missing_decision)}")
+    if extra_decision:
+        problems.append(f"orphan decision ClassVars (no matching event): {sorted(extra_decision)}")
+    if problems:
+        raise AssertionError(
+            "AgentHookSurface declarations diverged from the event sets:\n  - "
+            + "\n  - ".join(problems)
+        )
+
+
+_assert_declarations_match_event_sets(AgentHookSurface)
