@@ -28,8 +28,10 @@ PI_HOME="$SANDBOX/pi-home"
 # freethreaded venv at local-ft.venv/).
 VENV="${LIBHARNESS_VENV:-$PROJECT_ROOT/local.venv}"
 
-# nodeenv lives in the py3-14 miniforge env.
-NODEENV_PYTHON="/opt/miniforge/envs/base-py3-14/bin/python"
+# nodeenv is a dev dep in the project venv (see pyproject.toml). Using
+# $VENV here means install-pi runs after install-311 in `make bootstrap`,
+# which is the order the Makefile already enforces.
+NODEENV_PYTHON="$VENV/bin/python"
 
 PI_PKG_VERSION="${PI_PKG_VERSION:-0.74.0}"
 NODE_CHANNEL="${NODE_CHANNEL:-lts}"
