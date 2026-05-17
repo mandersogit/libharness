@@ -177,7 +177,8 @@ class PiRpcClient:
         await asyncio.sleep(min(0.2, max(0.0, self.config.startup_timeout)))
         if self.process.returncode is not None:
             raise PiRpcProcessError(
-                f"Pi exited during startup with code {self.process.returncode}. stderr={self.stderr!r}"
+                "Pi exited during startup with code "
+                f"{self.process.returncode}. stderr={self.stderr!r}"
             )
 
     async def close(self) -> None:
@@ -231,15 +232,26 @@ class PiRpcClient:
             raise PiRpcProcessError(f"could not write to Pi stdin. stderr={self.stderr!r}") from exc
 
         try:
-            response = await asyncio.wait_for(future, timeout=timeout or self.config.request_timeout)
+            response = await asyncio.wait_for(
+                future, timeout=timeout or self.config.request_timeout
+            )
         finally:
             self._pending.pop(request_id, None)
 
         if response.get("success") is False:
-            raise PiRpcError(str(request.get("type", "unknown")), str(response.get("error", "")), response)
+            raise PiRpcError(
+                str(request.get("type", "unknown")), str(response.get("error", "")), response
+            )
         return response
 
-    async def prompt(self, message: str, *, streaming_behavior: str | None = None, images: list[JsonObject] | None = None, **extra: Any) -> JsonObject:
+    async def prompt(
+        self,
+        message: str,
+        *,
+        streaming_behavior: str | None = None,
+        images: list[JsonObject] | None = None,
+        **extra: Any,
+    ) -> JsonObject:
         request: JsonObject = {"type": "prompt", "message": message, **extra}
         if streaming_behavior is not None:
             request["streamingBehavior"] = streaming_behavior
@@ -247,7 +259,9 @@ class PiRpcClient:
             request["images"] = images
         return await self.send(request)
 
-    async def prompt_and_wait(self, message: str, *, timeout: float = 120.0, **kwargs: Any) -> list[JsonObject]:
+    async def prompt_and_wait(
+        self, message: str, *, timeout: float = 120.0, **kwargs: Any
+    ) -> list[JsonObject]:
         events: list[JsonObject] = []
         done = asyncio.Event()
 
@@ -270,7 +284,9 @@ class PiRpcClient:
             request["images"] = images
         return await self.send(request)
 
-    async def follow_up(self, message: str, *, images: list[JsonObject] | None = None) -> JsonObject:
+    async def follow_up(
+        self, message: str, *, images: list[JsonObject] | None = None
+    ) -> JsonObject:
         request: JsonObject = {"type": "follow_up", "message": message}
         if images is not None:
             request["images"] = images
@@ -298,8 +314,6 @@ class PiRpcClient:
         return list(data.get("models") or data.get("availableModels") or [])
 
     async def set_model(self, provider: str, model_id: str) -> JsonObject:
-        # Pi's RPC contract requires ``modelId``, not ``model`` — see
-        # packages/coding-agent/src/modes/rpc/rpc-types.ts:31 in pi-mono.
         return await self.send({"type": "set_model", "provider": provider, "modelId": model_id})
 
     async def bash(self, command: str) -> JsonObject:
@@ -392,7 +406,9 @@ class PiRpcClient:
             response = await maybe if inspect.isawaitable(maybe) else maybe
         if response is None:
             response = self._default_ui_response(method)
-        await self._send_extension_ui_response({"type": "extension_ui_response", "id": request_id, **response})
+        await self._send_extension_ui_response(
+            {"type": "extension_ui_response", "id": request_id, **response}
+        )
 
     def _default_ui_response(self, method: str) -> JsonObject:
         if method == "confirm":

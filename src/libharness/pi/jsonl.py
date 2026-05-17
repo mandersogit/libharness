@@ -42,7 +42,9 @@ class StrictJsonlDecoder:
             return []
         self._buffer.extend(chunk)
         if len(self._buffer) > self._max_buffer_bytes:
-            raise JsonlDecodeError(f"JSONL buffer exceeded {self._max_buffer_bytes} bytes without LF terminator")
+            raise JsonlDecodeError(
+                f"JSONL buffer exceeded {self._max_buffer_bytes} bytes without LF terminator"
+            )
 
         records: list[Any] = []
         while True:
@@ -59,9 +61,13 @@ class StrictJsonlDecoder:
                 continue
             try:
                 records.append(json.loads(raw.decode("utf-8")))
-            except Exception as exc:  # pragma: no cover - exception type varies across Python versions
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - exception type varies across Python versions
                 preview = raw[:200].decode("utf-8", "replace")
-                raise JsonlDecodeError(f"invalid JSONL record: {exc}; record starts with {preview!r}") from exc
+                raise JsonlDecodeError(
+                    f"invalid JSONL record: {exc}; record starts with {preview!r}"
+                ) from exc
         return records
 
     def flush(self) -> None:

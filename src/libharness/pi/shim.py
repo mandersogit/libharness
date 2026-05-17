@@ -10,7 +10,9 @@ from typing import Any
 def write_bridge_shim(path: str | Path, *, diagnostic_commands: bool = True) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = PRODUCTION_TS_SHIM.replace("__DIAGNOSTIC_COMMANDS__", "true" if diagnostic_commands else "false")
+    text = PRODUCTION_TS_SHIM.replace(
+        "__DIAGNOSTIC_COMMANDS__", "true" if diagnostic_commands else "false"
+    )
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -42,13 +44,20 @@ def write_faux_toolcall_provider_extension(
     return path
 
 
-PRODUCTION_TS_SHIM = r'''
+PRODUCTION_TS_SHIM = r"""
 import * as net from "node:net";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type JsonObject = Record<string, any>;
+
+type PythonBridgeManifest = {
+  protocolVersion: 1;
+  tools: PythonToolSpec[];
+  initialOpenGates?: string[];
+  decisionTimeoutsMs?: Record<string, number>;
+};
 
 type PythonToolSpec = {
   name: string;
@@ -64,7 +73,30 @@ const HOST = process.env.PI_PY_TOOLS_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PI_PY_TOOLS_PORT ?? "0");
 const TOKEN = process.env.PI_PY_TOOLS_TOKEN ?? "";
 const BRIDGE_TIMEOUT_MS = Number(process.env.PI_PY_BRIDGE_TIMEOUT_MS ?? "120000");
-const DIAGNOSTIC_COMMANDS = __DIAGNOSTIC_COMMANDS__ && process.env.PI_PY_DIAGNOSTIC_COMMANDS !== "0";
+const DIAGNOSTIC_COMMANDS =
+  __DIAGNOSTIC_COMMANDS__ && process.env.PI_PY_DIAGNOSTIC_COMMANDS !== "0";
+
+const DECISION_EVENTS = [
+  "resources_discover",
+  "session_start",
+  "session_before_switch",
+  "session_before_fork",
+  "session_before_compact",
+  "session_compact",
+  "session_shutdown",
+  "session_before_tree",
+  "session_tree",
+  "context",
+  "before_provider_request",
+  "after_provider_response",
+  "before_agent_start",
+  "model_select",
+  "thinking_level_select",
+  "tool_call",
+  "tool_result",
+  "user_bash",
+  "input",
+] as const;
 
 function strictSchema(schema: JsonObject | undefined): any {
   return Type.Unsafe(schema ?? { type: "object", properties: {}, additionalProperties: false });
@@ -96,14 +128,32 @@ function summarizeResult(value: any): string {
   return text || JSON.stringify(result);
 }
 
+function jsonSafe(value: any): any {
+  try {
+    return JSON.parse(JSON.stringify(value, (_key, item) => {
+      if (typeof item === "bigint") return item.toString();
+      if (typeof item === "function") return undefined;
+      if (item instanceof AbortSignal) return { aborted: item.aborted };
+      return item;
+    }));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { type: String(value?.type ?? "unknown"), serializationError: detail };
+  }
+}
+
 async function bridgeCall<T = any>(
   type: string,
   payload: JsonObject = {},
   onUpdate?: (data: any) => void,
   signal?: AbortSignal,
+  timeoutMs: number | null = BRIDGE_TIMEOUT_MS,
 ): Promise<T> {
   if (!PORT || !TOKEN) {
-    throw new Error("Python bridge is not configured. PI_PY_TOOLS_PORT and PI_PY_TOOLS_TOKEN are required.");
+    throw new Error(
+      "Python bridge is not configured. " +
+        "PI_PY_TOOLS_PORT and PI_PY_TOOLS_TOKEN are required.",
+    );
   }
 
   const id = randomUUID();
@@ -113,9 +163,10 @@ async function bridgeCall<T = any>(
     const socket = net.createConnection({ host: HOST, port: PORT });
     let buffer = "";
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
 
     const cleanup = (destroy = false) => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       socket.removeAllListeners();
       if (destroy) socket.destroy();
@@ -129,8 +180,14 @@ async function bridgeCall<T = any>(
       fn();
     };
 
-    const onAbort = () => finish(() => reject(new Error(`Python bridge call aborted: ${type}`)), true);
-    const timer = setTimeout(() => finish(() => reject(new Error(`Python bridge call timed out: ${type}`)), true), BRIDGE_TIMEOUT_MS);
+    const onAbort = () =>
+      finish(() => reject(new Error(`Python bridge call aborted: ${type}`)), true);
+    if (timeoutMs !== null && timeoutMs !== undefined) {
+      timer = setTimeout(
+        () => finish(() => reject(new Error(`Python bridge call timed out: ${type}`)), true),
+        timeoutMs,
+      );
+    }
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -152,7 +209,8 @@ async function bridgeCall<T = any>(
         try {
           frame = JSON.parse(line);
         } catch (error) {
-          finish(() => reject(new Error(`Invalid JSON from Python bridge: ${error instanceof Error ? error.message : error}`)), true);
+          const detail = error instanceof Error ? error.message : error;
+          finish(() => reject(new Error(`Invalid JSON from Python bridge: ${detail}`)), true);
           return;
         }
         if (frame.id !== id) continue;
@@ -182,17 +240,88 @@ async function bridgeCall<T = any>(
   });
 }
 
-const SUPPORTED_PROTOCOL_VERSION = 1;
+function bridgeNotify(type: string, payload: JsonObject = {}): Promise<void> {
+  if (!PORT || !TOKEN) return Promise.resolve();
+  const id = randomUUID();
+  const request = { id, type, token: TOKEN, ...payload };
+  return new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection({ host: HOST, port: PORT });
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      fn();
+    };
+    socket.on("connect", () => {
+      socket.end(`${JSON.stringify(request)}\n`, "utf8");
+      finish(resolve);
+    });
+    socket.on("error", (error) => finish(() => reject(error)));
+  });
+}
+
+async function handleDecisionEvent(
+  eventName: string,
+  event: any,
+  openGates: Set<string>,
+  decisionTimeoutsMs: Record<string, number>,
+  signal?: AbortSignal,
+): Promise<any> {
+  const data = jsonSafe(event);
+  if (!data.type) data.type = eventName;
+
+  if (!openGates.has(eventName)) {
+    void bridgeNotify("notify_event", { event: eventName, data }).catch((error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`[pi-python-harness] notify_event ${eventName} failed: ${detail}`);
+    });
+    return undefined;
+  }
+
+  const timeout = Object.prototype.hasOwnProperty.call(decisionTimeoutsMs, eventName)
+    ? decisionTimeoutsMs[eventName]
+    : null;
+  try {
+    const result = await bridgeCall<any>(
+      "event",
+      { event: eventName, data },
+      undefined,
+      signal,
+      timeout,
+    );
+    return result === null ? undefined : result;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (timeout !== null && detail.includes("timed out")) {
+      console.warn(`[pi-python-harness] decision hook timed out for ${eventName}: ${detail}`);
+    } else {
+      console.warn(`[pi-python-harness] decision hook failed for ${eventName}: ${detail}`);
+    }
+    return undefined;
+  }
+}
 
 export default async function pythonToolsExtension(pi: ExtensionAPI) {
-  const manifest = await bridgeCall<{ protocolVersion?: number; tools: PythonToolSpec[] }>("manifest");
-  if (manifest.protocolVersion !== SUPPORTED_PROTOCOL_VERSION) {
-    throw new Error(
-      `Python tool bridge protocol mismatch: shim supports ${SUPPORTED_PROTOCOL_VERSION}, ` +
-        `Python sent ${String(manifest.protocolVersion)}`,
-    );
+  const manifest = await bridgeCall<PythonBridgeManifest>("manifest");
+  if (manifest.protocolVersion !== 1) {
+    throw new Error(`Unsupported Python bridge protocol version: ${manifest.protocolVersion}`);
   }
   const tools = manifest.tools ?? [];
+  const openGates = new Set(manifest.initialOpenGates ?? []);
+  const decisionTimeoutsMs = manifest.decisionTimeoutsMs ?? {};
+
+  for (const eventName of DECISION_EVENTS) {
+    (pi.on as any)(eventName, async (event: any, ctx: any) => {
+      return await handleDecisionEvent(
+        eventName,
+        event,
+        openGates,
+        decisionTimeoutsMs,
+        ctx?.signal,
+      );
+    });
+  }
 
   for (const spec of tools) {
     pi.registerTool({
@@ -218,6 +347,7 @@ export default async function pythonToolsExtension(pi: ExtensionAPI) {
           },
           (partial) => onUpdate?.(normalizeAgentToolResult(partial)),
           signal,
+          BRIDGE_TIMEOUT_MS,
         );
         return normalizeAgentToolResult(result);
       },
@@ -247,23 +377,30 @@ export default async function pythonToolsExtension(pi: ExtensionAPI) {
         try {
           params = rawArgs ? JSON.parse(rawArgs) : {};
         } catch (error) {
-          ctx.ui.notify(`Invalid JSON args: ${error instanceof Error ? error.message : String(error)}`, "error");
+          const detail = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Invalid JSON args: ${detail}`, "error");
           return;
         }
         try {
-          const result = await bridgeCall<any>("execute", { tool: toolName, toolCallId: `manual-${randomUUID()}`, params }, undefined, ctx.signal);
+          const result = await bridgeCall<any>(
+            "execute",
+            { tool: toolName, toolCallId: `manual-${randomUUID()}`, params },
+            undefined,
+            ctx.signal,
+            BRIDGE_TIMEOUT_MS,
+          );
           ctx.ui.notify(summarizeResult(result));
         } catch (error) {
-          ctx.ui.notify(`Python tool failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+          const detail = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Python tool failed: ${detail}`, "error");
         }
       },
     });
   }
 }
-'''
+"""
 
-
-TS_FAUX_PROVIDER_TEMPLATE = r'''
+TS_FAUX_PROVIDER_TEMPLATE = r"""
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 
@@ -284,7 +421,10 @@ export default function fauxToolcallProvider(pi: ExtensionAPI) {
     }],
   });
   faux.setResponses([
-    fauxAssistantMessage(fauxToolCall(__TOOL_NAME__, __TOOL_ARGUMENTS__), { stopReason: "toolUse" }),
+    fauxAssistantMessage(
+      fauxToolCall(__TOOL_NAME__, __TOOL_ARGUMENTS__),
+      { stopReason: "toolUse" },
+    ),
     fauxAssistantMessage(__FINAL_TEXT__),
   ]);
   pi.registerProvider(providerName, {
@@ -302,4 +442,4 @@ export default function fauxToolcallProvider(pi: ExtensionAPI) {
     })),
   });
 }
-'''
+"""

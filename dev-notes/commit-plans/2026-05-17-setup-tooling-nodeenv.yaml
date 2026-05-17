@@ -1,0 +1,31 @@
+repo: .
+
+commits:
+  - message: |
+      fix(setup): pin nodeenv as explicit dev dep + point NODEENV_PYTHON at $VENV
+
+      Bootstrapping a fresh checkout on a machine without nodeenv
+      pre-installed in /opt/miniforge/envs/base-py3-14/ fails at
+      `make install-pi` because setup-node.sh invokes `python -m nodeenv`
+      against that env. Two coupled changes fix this without polluting
+      shared conda envs:
+
+      - pyproject.toml: add `nodeenv>=1.10` to dev deps. Pyright pulls
+        nodeenv in transitively, so most invocations work by accident;
+        the explicit pin makes install-pi's dependency deliberate.
+
+      - scripts/lib/env.sh: point NODEENV_PYTHON at "$VENV/bin/python"
+        instead of the hardcoded miniforge path. The Makefile already
+        enforces `install-311` runs before `install-pi` under
+        `make bootstrap`, so the venv python is guaranteed to exist by
+        the time setup-node.sh runs.
+
+      Matches the configuration in the sibling `libharness` checkout
+      (threads-rewrite branch); both checkouts had this as an
+      uncommitted working-tree change.
+
+      Pre-sprint setup for the v8 port; see
+      dev-notes/2026-05-17-v8-port-plan.md.
+    files:
+      - pyproject.toml
+      - scripts/lib/env.sh

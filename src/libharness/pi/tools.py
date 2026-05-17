@@ -7,23 +7,24 @@ import dataclasses
 import inspect
 import json
 import re
+import threading
 import traceback
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import NoneType, UnionType
-from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, cast, get_args, get_origin, get_type_hints
 
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_\-.]{0,127}$")
-_EMPTY_OBJECT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
+MANIFEST_PROTOCOL_VERSION = 1
+"""Bridge manifest protocol version. Bump only for incompatible wire-shape changes."""
 
-#: Wire-protocol version for the Python↔TypeScript tool bridge manifest.
-#:
-#: Bump on any backwards-incompatible change to the manifest schema or the
-#: ``manifest`` / ``execute`` / ``update`` / ``response`` frame shapes. The
-#: TS shim asserts equality during handshake; mismatches fail extension load
-#: rather than producing confused runtime errors later.
-MANIFEST_PROTOCOL_VERSION: int = 1
+
+_EMPTY_OBJECT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": False,
+}
 
 
 class ToolError(RuntimeError):
@@ -43,16 +44,34 @@ class ToolResult:
     terminate: bool | None = None
 
     @classmethod
-    def text(cls, text: str, *, details: Mapping[str, Any] | None = None, terminate: bool | None = None) -> ToolResult:
-        return cls(content=[{"type": "text", "text": text}], details=dict(details or {}), terminate=terminate)
+    def text(
+        cls, text: str, *, details: Mapping[str, Any] | None = None, terminate: bool | None = None
+    ) -> ToolResult:
+        return cls(
+            content=[{"type": "text", "text": text}],
+            details=dict(details or {}),
+            terminate=terminate,
+        )
 
     @classmethod
-    def json(cls, value: Any, *, details: Mapping[str, Any] | None = None, terminate: bool | None = None) -> ToolResult:
-        return cls.text(json.dumps(value, ensure_ascii=False, indent=2), details=details or {"value": value}, terminate=terminate)
+    def json(
+        cls, value: Any, *, details: Mapping[str, Any] | None = None, terminate: bool | None = None
+    ) -> ToolResult:
+        return cls.text(
+            json.dumps(value, ensure_ascii=False, indent=2),
+            details=details or {"value": value},
+            terminate=terminate,
+        )
 
     @classmethod
-    def image(cls, url: str, *, details: Mapping[str, Any] | None = None, terminate: bool | None = None) -> ToolResult:
-        return cls(content=[{"type": "image", "url": url}], details=dict(details or {}), terminate=terminate)
+    def image(
+        cls, url: str, *, details: Mapping[str, Any] | None = None, terminate: bool | None = None
+    ) -> ToolResult:
+        return cls(
+            content=[{"type": "image", "url": url}],
+            details=dict(details or {}),
+            terminate=terminate,
+        )
 
     def to_wire(self) -> dict[str, Any]:
         out: dict[str, Any] = {"content": self.content, "details": self.details}
@@ -69,7 +88,7 @@ class ToolContext:
     tool_name: str
     cwd: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    _cancelled: asyncio.Event | None = None
+    _cancelled: Any = None
     _update_callback: Callable[[ToolResult | Mapping[str, Any] | str], Any] | None = None
 
     @property
@@ -152,6 +171,8 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, RegisteredTool] = {}
+        self._lock = threading.RLock()
+        self._frozen = False
 
     def register(
         self,
@@ -169,14 +190,23 @@ class ToolRegistry:
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             tool_name = name or fn.__name__
             _validate_name(tool_name)
-            if tool_name in self._tools:
-                raise ToolError(f"tool {tool_name!r} already registered")
+            with self._lock:
+                if self._frozen:
+                    raise ToolError("cannot register tools after ToolRegistry.freeze()")
+                if tool_name in self._tools:
+                    raise ToolError(f"tool {tool_name!r} already registered")
 
             doc = inspect.getdoc(fn) or ""
             desc = description or doc.split("\n", 1)[0] or tool_name
             ctx_param, inferred_pass_context = _detect_context_param(fn)
             effective_pass_context = inferred_pass_context if pass_context is None else pass_context
-            schema = dict(parameters) if parameters is not None else _schema_from_signature(fn, skip_param=ctx_param if effective_pass_context else None)
+            schema = (
+                dict(parameters)
+                if parameters is not None
+                else _schema_from_signature(
+                    fn, skip_param=ctx_param if effective_pass_context else None
+                )
+            )
 
             spec = ToolSpec(
                 name=tool_name,
@@ -187,7 +217,14 @@ class ToolRegistry:
                 prompt_guidelines=tuple(prompt_guidelines or ()),
                 execution_mode=execution_mode,
             )
-            self._tools[tool_name] = RegisteredTool(spec=spec, func=fn, pass_context=effective_pass_context, context_param=ctx_param)
+            with self._lock:
+                if self._frozen:
+                    raise ToolError("cannot register tools after ToolRegistry.freeze()")
+                if tool_name in self._tools:
+                    raise ToolError(f"tool {tool_name!r} already registered")
+                self._tools[tool_name] = RegisteredTool(
+                    spec=spec, func=fn, pass_context=effective_pass_context, context_param=ctx_param
+                )
             return fn
 
         if func is None:
@@ -196,23 +233,39 @@ class ToolRegistry:
 
     tool = register
 
+    def freeze(self) -> ToolRegistry:
+        """Prevent further registration so worker threads can read the registry safely."""
+
+        with self._lock:
+            self._frozen = True
+        return self
+
+    @property
+    def frozen(self) -> bool:
+        with self._lock:
+            return self._frozen
+
     def get(self, name: str) -> RegisteredTool:
-        try:
-            return self._tools[name]
-        except KeyError as exc:
-            raise ToolError(f"unknown tool {name!r}") from exc
+        with self._lock:
+            try:
+                return self._tools[name]
+            except KeyError as exc:
+                raise ToolError(f"unknown tool {name!r}") from exc
 
     def __contains__(self, name: str) -> bool:
-        return name in self._tools
+        with self._lock:
+            return name in self._tools
 
     def __iter__(self) -> Iterator[RegisteredTool]:
-        return iter(self._tools.values())
+        with self._lock:
+            return iter(tuple(self._tools.values()))
 
     def manifest(self) -> dict[str, Any]:
-        return {
-            "protocolVersion": MANIFEST_PROTOCOL_VERSION,
-            "tools": [registered.spec.to_manifest() for registered in self._tools.values()],
-        }
+        with self._lock:
+            return {
+                "protocolVersion": MANIFEST_PROTOCOL_VERSION,
+                "tools": [registered.spec.to_manifest() for registered in self._tools.values()],
+            }
 
 
 def normalize_tool_value(value: Any) -> ToolResult:
@@ -227,12 +280,14 @@ def normalize_tool_value(value: Any) -> ToolResult:
     if isinstance(value, Mapping):
         mapping = dict(value)
         if isinstance(mapping.get("content"), list):
-            return ToolResult(content=list(mapping["content"]), details=dict(mapping.get("details") or {}), terminate=mapping.get("terminate"))
+            return ToolResult(
+                content=list(mapping["content"]),
+                details=dict(mapping.get("details") or {}),
+                terminate=mapping.get("terminate"),
+            )
         return ToolResult.json(mapping)
-    if not isinstance(value, type) and dataclasses.is_dataclass(value):
-        # mypy's TypeGuard on is_dataclass widens to instance-or-type; the
-        # isinstance(value, type) guard above already excludes the type case.
-        return ToolResult.json(dataclasses.asdict(value))  # type: ignore[arg-type]
+    if dataclasses.is_dataclass(value):
+        return ToolResult.json(dataclasses.asdict(cast(Any, value)))
     return ToolResult.text(str(value), details={"repr": repr(value)})
 
 
@@ -277,7 +332,8 @@ def exception_to_wire(exc: BaseException) -> dict[str, Any]:
 def _validate_name(name: str) -> None:
     if not _NAME_RE.match(name):
         raise ToolError(
-            "tool names must start with a letter or underscore and contain only letters, digits, underscore, hyphen, or dot"
+            "tool names must start with a letter or underscore and contain only letters, "
+            "digits, underscore, hyphen, or dot"
         )
 
 
@@ -321,7 +377,12 @@ def _schema_from_signature(fn: Callable[..., Any], *, skip_param: str | None) ->
         else:
             required.append(name)
         properties[name] = schema
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
 
 
 def _schema_for_type(annotation: Any) -> dict[str, Any]:
@@ -361,8 +422,16 @@ def _schema_for_type(annotation: Any) -> dict[str, Any]:
         required: list[str] = []
         for field_info in dataclasses.fields(annotation):
             props[field_info.name] = _schema_for_type(field_info.type)
-            if field_info.default is dataclasses.MISSING and field_info.default_factory is dataclasses.MISSING:
+            if (
+                field_info.default is dataclasses.MISSING
+                and field_info.default_factory is dataclasses.MISSING
+            ):
                 required.append(field_info.name)
-        return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
+        return {
+            "type": "object",
+            "properties": props,
+            "required": required,
+            "additionalProperties": False,
+        }
 
     return {}

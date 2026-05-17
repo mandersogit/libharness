@@ -1,0 +1,79 @@
+repo: .
+
+commits:
+  - message: |
+      feat(pi): vendor v8 source as libharness.pi (decision hooks + opt-in participation)
+
+      Phase 1 of the v8 port plan (dev-notes/2026-05-17-v8-port-plan.md).
+      Replaces the v5 baseline under src/libharness/pi/ with v8's source,
+      adding three new modules and overwriting five existing ones.
+
+      New files (v8 introduces):
+
+        - agent.py         — PiAgentHarness (threaded proxy + owner thread)
+        - agent_class.py   — Agent (subclassable, with notification + decision
+                              hooks; mixin extraction happens in Phase 2)
+        - runtime.py       — HarnessRuntime, AsyncioLoopThread, default-runtime
+        - cli.py           — `python -m libharness.pi.cli write-shim …` utility
+
+      Replaced files (v8 evolves v5):
+
+        - __init__.py      — re-exports the new public surface alongside v5's
+        - harness.py       — PiPythonHarness; async-first surface preserved
+        - jsonl.py         — unchanged on the wire surface
+        - rpc.py           — UI request handling, set_model fix preserved
+        - server.py        — adds notify_event + initial_open_gates +
+                              decision_timeouts_ms manifest fields
+        - shim.py          — adds DECISION_EVENTS array + gate registration
+                              + bridgeNotify vs bridgeCall dispatch
+        - tools.py         — promotes manifest version to a named
+                              MANIFEST_PROTOCOL_VERSION constant
+        - py.typed         — unchanged
+
+      Skipped intentionally:
+
+        - agent_class_mca.py is the mixin variant; Phase 2 swaps to it.
+
+      Namespace: zero `pi_python_harness` references in the v8 source
+      (all relative imports), so the rename is a no-op beyond the
+      directory placement.
+
+      Ruff version-skew fixups applied during the vendor (v8's source
+      was lint-clean against ruff 0.5; libharness uses 0.15.13):
+
+        - UP037 (26 auto-fixes): unquote type annotations made redundant
+          by `from __future__ import annotations`.
+        - C408: agent.py:_core_kwargs uses a dict literal instead of
+          dict(...) with keyword arguments.
+        - SIM105 (×2): rpc.py and runtime.py use contextlib.suppress(...)
+          instead of try/except/pass.
+
+      All three SIM105 sites and the C408 site are stylistically
+      equivalent to the v8 originals; no semantic change.
+
+      Tests: `make all` green on local.venv (3.11) and local-ft.venv
+      (3.14t). 7 unit tests pass (existing v5-era suite — the broader
+      v8 test port lands in Phase 6). Set_model regression test passes,
+      confirming the `model → modelId` wire fix preserved in v8.
+
+      Also bundles two commit-plan YAMLs:
+
+        - 2026-05-17-setup-tooling-nodeenv.yaml (orphan from the prior
+          setup-tooling commit `71eadae` — caught up here, since the
+          repo convention tracks these alongside the work they describe).
+        - 2026-05-17-phase-1-vendor-v8.yaml (this commit's own plan).
+    files:
+      - src/libharness/pi/__init__.py
+      - src/libharness/pi/agent.py
+      - src/libharness/pi/agent_class.py
+      - src/libharness/pi/cli.py
+      - src/libharness/pi/harness.py
+      - src/libharness/pi/jsonl.py
+      - src/libharness/pi/py.typed
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/runtime.py
+      - src/libharness/pi/server.py
+      - src/libharness/pi/shim.py
+      - src/libharness/pi/tools.py
+      - dev-notes/commit-plans/2026-05-17-setup-tooling-nodeenv.yaml
+      - dev-notes/commit-plans/2026-05-17-phase-1-vendor-v8.yaml
