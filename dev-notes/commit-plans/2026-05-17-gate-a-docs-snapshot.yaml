@@ -1,0 +1,46 @@
+repo: .
+
+commits:
+  - message: |
+      docs: v8 port sprint scaffolding + Gate A snapshot
+
+      Captures the running implementation journal and self-handoff doc
+      for the v8 port sprint at the Gate A milestone (Phases 1-5
+      complete + consistency-check helper landed).
+
+      Two new files under dev-notes/:
+
+        - 2026-05-17-v8-port-journal.md — phase-by-phase log
+          (frontmatter status: Active). Half audit trail, half
+          context-recovery aid for future sessions. Covers Tasks #1
+          (setup-tooling), #2 (journal+handoff scaffolding), #3-#7
+          (Phases 1-5), #8 (Gate A) with per-phase action, surprises,
+          tests/validation, and commit hash.
+
+        - 2026-05-17-v8-port-handoff.md — volatile self-handoff
+          (frontmatter status: Active). Working-memory snapshot
+          refreshed each phase. Carries the operating-mode agreement
+          (commit-plans authorization, 4-LLM surprise-resolution loop,
+          8-reviewer Gate A.5 + Opus synthesizer, user check-in
+          points), key paths/commands cheat-sheets, and the carried
+          decisions/bug-fixes lists.
+
+      Sprint state at this commit:
+
+        - 6 code commits since main: setup tooling + Phases 1-5.
+        - Source-side v8 port complete: events.py + hook_surface.py +
+          agent_class.py three-file layout, 112 hook ClassVars,
+          consistency-check guard, mixin-based Agent class. Tests pass
+          on local.venv (3.11) and local-ft.venv (3.14t).
+        - 14 of 31 tasks in the harness TaskList complete (work items
+          #1-7, journal items #17-23).
+        - Awaiting user check-in before proceeding to Phase 5.5
+          (cherry-pick three known v8 bugs with regression tests) and
+          Gate A.5 (8-reviewer adversarial review + Opus synthesis).
+
+      Both files will be refreshed and re-committed at the next gate
+      boundary (Gate A.5 or Gate B/C).
+    files:
+      - dev-notes/2026-05-17-v8-port-journal.md
+      - dev-notes/2026-05-17-v8-port-handoff.md
+      - dev-notes/commit-plans/2026-05-17-gate-a-docs-snapshot.yaml
