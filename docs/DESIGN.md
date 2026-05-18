@@ -21,16 +21,23 @@ exist) get their own sibling subpackage and their own design doc.
 
 ```text
 Python application
-  ├─ ToolRegistry           (@register decorators, JSON Schema from hints)
-  ├─ PythonToolServer       (asyncio JSONL server on 127.0.0.1, token-protected)
-  └─ PiRpcClient            (subprocess: pi --mode rpc, LF-only JSONL)
+  ├─ Agent                  (subclassable; AgentHookSurface mixin with 112 ClassVars)
+  │   └─ on_/async_on_/decide_/async_decide_ <event>  (37/37/19/19 hook slots)
+  └─ PiAgentHarness         (thread-owned proxy)
+       ├─ HarnessRuntime    (one shared asyncio loop thread + tool executor + hook executor)
+       ├─ ToolRegistry      (@register decorators, JSON Schema from hints)
+       ├─ PythonToolServer  (asyncio JSONL server on 127.0.0.1, token-protected)
+       └─ PiRpcClient       (subprocess: pi --mode rpc, LF-only JSONL)
                                  │
                                  ▼
                             Pi process (sandboxed)
                                  └─ generic TS extension (loaded via --extension)
                                       ├─ handshake: bridge.manifest()
                                       ├─ pi.registerTool() per manifest entry
-                                      └─ execute(): forward to Python bridge
+                                      ├─ execute(): forward to Python bridge
+                                      └─ pi.on(eventName, …) for 19 decision events
+                                          ├─ gate closed → bridgeNotify (fire-and-forget)
+                                          └─ gate open   → bridgeCall   (sync round-trip)
 ```
 
 The two protocols are deliberately separate:
@@ -39,6 +46,10 @@ The two protocols are deliberately separate:
 1. **Bridge** between the TS shim (running inside pi) and the Python tool server (loopback TCP JSONL with a bearer token). Owned by us on both sides.
 
 Keeping them separate means pi's RPC contract can evolve without touching the bridge and vice versa.
+
+**Threading model.** One asyncio loop thread (shared across harnesses by default; created by `HarnessRuntime`) owns subprocess and socket I/O. Each `PiAgentHarness` has its own owner thread for harness state; the public API marshals work onto that owner thread and blocks for the result. A shared tool executor runs Python tool bodies; a dedicated single-worker hook executor runs sync notification and decision hooks. The application main thread stays the application's.
+
+**Agent class.** Optional subclassable surface on top of `PiAgentHarness`. Users override `on_<event>` / `async_on_<event>` for notification (37 events: 18 RPC notification + 19 decision-event observation slots) and `decide_<event>` / `async_decide_<event>` for decision participation (19 events). Method existence opens the corresponding bridge gate at extension load. Per-event return shapes documented in [docs/AGENT_HOOKS.md](AGENT_HOOKS.md).
 
 ## Process lifecycle
 
@@ -276,11 +287,16 @@ RPC already exposes `extension_ui_request` / `extension_ui_response` for dialogs
 
 Decisions made and their rationale. New decisions append; old ones stay for historical context (mark as superseded if reversed, never delete).
 
-| Date       | Decision                                              |
-| ---------- | ----------------------------------------------------- |
-| 2026-05-14 | Bridge transport: loopback TCP + bearer token, no UDS |
-| 2026-05-14 | Sessions: pi-native; no Python-side session model     |
-| 2026-05-15 | Concurrency: threads, freethreading-first             |
+| Date       | Decision                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| 2026-05-14 | Bridge transport: loopback TCP + bearer token, no UDS                                                          |
+| 2026-05-14 | Sessions: pi-native; no Python-side session model                                                              |
+| 2026-05-15 | Concurrency: threads, freethreading-first (**Superseded** by 2026-05-17 row)                                   |
+| 2026-05-17 | Concurrency: asyncio core in dedicated thread; Agent class with opt-in hooks                                   |
+| 2026-05-17 | Hook surface layout: `AgentHookSurface` public mixin; 3-file split                                             |
+| 2026-05-17 | Decision-hook return shape: raw dict per pi's TS event-result types                                            |
+| 2026-05-17 | Cancellation API: `HookContext` with cooperative polling on `threading.Event`                                  |
+| 2026-05-17 | Timeout config: `_decision_timeout_ms` (global) + `_decision_timeouts_ms` (per-event), both opt-in, no default |
 
 **Detail:**
 
@@ -294,15 +310,48 @@ Decisions made and their rationale. New decisions append; old ones stay for hist
   first-class fork/branch operations. Replicating in Python would
   duplicate non-trivial state with no clear gain. Reference:
   `dev-notes/2026-05-14-pi-internals-notes.md` § Session structure.
-- *2026-05-15 — Concurrency:* Primarily **D** — threads on freethreaded
-  CPython 3.14t, optimizing for FT parallelism opportunities.
-  Backwards-compatible with **C** — the same code runs on standard
-  CPython 3.11+ under the GIL, verified by `make test-311`. Sync `def`
-  for tool functions and `on_*` hooks; `async def` is rejected at
-  decoration time (not-pi-2 pattern). The dual-venv scaffolding
-  (`local.venv` 3.11 + `local-ft.venv` 3.14t; `make all` runs both) is
-  the verification surface. Full rationale and the original co-design
-  analysis live at `dev-notes/2026-05-15-concurrency-model-discussion.md`.
+- *2026-05-15 — Concurrency (Superseded):* Primarily **D** — threads on
+  freethreaded CPython 3.14t. Implemented as far as phase 3 on the
+  parallel `threads-rewrite` branch; doubts surfaced about the
+  rip-asyncio-out approach (thread inventory ballooning, lock-order
+  complexity, sync-callback ergonomics). Superseded 2026-05-17 by the
+  asyncio-in-thread direction below. Body preserved for audit trail at
+  `dev-notes/2026-05-15-concurrency-model-discussion.md` and
+  `dev-notes/2026-05-15-threads-rewrite-plan.md`.
+- *2026-05-17 — Concurrency:* Keep the asyncio core but run it in a
+  dedicated thread (`HarnessRuntime` + `AsyncioLoopThread`). Each
+  `PiAgentHarness` has its own owner thread; the public API marshals to
+  it. Tool bodies run on a shared `ThreadPoolExecutor`; sync hooks on a
+  dedicated single-worker hook executor. Verified on both `local.venv`
+  (3.11) and `local-ft.venv` (3.14t freethreaded). Full rationale at
+  `dev-notes/2026-05-17-v6-as-base-direction.md` and the design
+  analysis at `dev-notes/2026-05-17-v8-analysis.md`.
+- *2026-05-17 — Hook surface layout:* `AgentHookSurface` is a public
+  mixin (no leading underscore) with 112 ClassVar declarations covering
+  every observable hook flavor for every event. Three-file split:
+  `events.py` (data types: `AgentEvent`, `HookContext`,
+  `UnhandledEventError`), `hook_surface.py` (mixin + validation), and
+  `agent_class.py` (the `Agent` class with dispatchers). An import-time
+  consistency-check guard pins the invariant that the 112 ClassVars
+  match the event frozensets.
+- *2026-05-17 — Decision-hook return shape:* Raw Python `dict` matching
+  pi's TypeScript `extensions/types.ts` event-result union. No
+  TypedDicts in v1; per-event shapes documented in
+  [docs/AGENT_HOOKS.md](AGENT_HOOKS.md). Revisit if a user-facing
+  case for compile-time shape safety surfaces.
+- *2026-05-17 — Cancellation API:* `HookContext` (a frozen dataclass
+  with `event_name`, `request_id`, `_cancelled: threading.Event`) is
+  passed as an optional second positional to decision hooks. Hooks
+  opt in by including `ctx` (or `*args`); the dispatcher detects via
+  `inspect.signature`. `ctx.cancelled` is a property that polls the
+  Event; long-running hooks should check it and return `None`.
+- *2026-05-17 — Timeout config:* Both `_decision_timeout_ms`
+  (single int, applies to every open gate) and `_decision_timeouts_ms`
+  (`dict[str, int]`, per-event overrides). Per-event entries beat
+  global. Both default to nothing — no timeout is enforced unless a
+  subclass opts in. Rationale: human-in-the-loop decision hooks may
+  legitimately need to block for hours or days. A timeout default
+  would assume human-not-in-the-loop, which the library does not.
 
 ## When to switch away
 

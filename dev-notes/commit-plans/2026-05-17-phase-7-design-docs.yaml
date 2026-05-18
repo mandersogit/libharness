@@ -1,0 +1,63 @@
+repo: .
+
+commits:
+  - message: |
+      docs: update DESIGN.md for asyncio-in-thread + Agent class; port AGENT_HOOKS.md
+
+      Phase 7 of the v8 port plan.
+
+      ## docs/DESIGN.md updates
+
+        - § Architecture: ASCII diagram now shows the Agent class +
+          AgentHookSurface mixin on top, PiAgentHarness as the thread-
+          owned proxy, HarnessRuntime as the threading scaffolding (one
+          asyncio loop thread + tool executor + hook executor), and the
+          new pi.on(eventName, …) gate-model branch with bridgeNotify /
+          bridgeCall dispatch.
+        - § Architecture: added a "Threading model" paragraph and an
+          "Agent class" paragraph spelling out the surface (37 + 37 +
+          19 + 19 = 112 hook ClassVars, opt-in via method existence,
+          per-event return shapes in AGENT_HOOKS.md).
+        - § Resolved decisions: marked 2026-05-15 concurrency row as
+          Superseded; added 5 new 2026-05-17 rows covering:
+            * Concurrency: asyncio core in dedicated thread; Agent
+              class with opt-in hooks (carries the v8 direction shift).
+            * Hook surface layout: AgentHookSurface public mixin;
+              three-file split.
+            * Decision-hook return shape: raw dict per pi's TS event
+              result types.
+            * Cancellation API: HookContext with cooperative polling
+              on threading.Event.
+            * Timeout config: opt-in _decision_timeout_ms +
+              _decision_timeouts_ms; default None (HITL case — explicit
+              note that defaulting to 30s would assume non-HITL usage).
+        - § Resolved decisions Detail list expanded with the rationale
+          for each new row plus the supersede explanation pointing
+          readers at the threads-rewrite branch and the v6/v7/v8
+          analysis docs.
+
+      ## docs/AGENT_HOOKS.md (new, ported from v8)
+
+      Copied from dev-notes/predecessors/v8-decision-hooks/docs/
+      AGENT_HOOKS.md, renamed `pi_python_harness` → `libharness.pi`.
+      The 19-row decision-event return-shape table exceeded the
+      150-col project limit; applied the sidecar pattern: shortened
+      cell content for three rows (session_before_tree, tool_call,
+      input) and expanded the prose into a **Detail:** list below.
+
+      Other content unchanged from v8: notification-hook event set,
+      gate model, channel separation, cancellation, threading model.
+
+      ## Acceptance
+
+        - `make lint-md` green on both docs.
+        - 150-col table check green on both docs.
+        - No `pi_python_harness` references survive.
+        - Internal `docs/AGENT_HOOKS.md` link in DESIGN.md resolves.
+
+      No code change. No test impact. Phases 8 (supersede notes) and
+      9 (SESSION-STATE update) follow.
+    files:
+      - docs/DESIGN.md
+      - docs/AGENT_HOOKS.md
+      - dev-notes/commit-plans/2026-05-17-phase-7-design-docs.yaml
