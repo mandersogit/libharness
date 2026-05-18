@@ -120,6 +120,11 @@ class PiRpcClient:
         self._stderr_chunks: list[str] = []
         self._request_counter = 0
         self._closed = False
+        # F33: signaled by close()/cleanup so coroutines blocked in
+        # next_event()/wait_for_event() unblock with PiRpcError instead of
+        # hanging forever. asyncio.Event creation is loop-agnostic at
+        # construction time; the loop is bound on first await.
+        self._close_event: asyncio.Event = asyncio.Event()
 
     @property
     def stderr(self) -> str:
@@ -184,23 +189,32 @@ class PiRpcClient:
             raise PiRpcProcessError(f"could not start Pi command {argv[0]!r}") from exc
 
         self._closed = False
+        # F33: reset the close signal for a retry path after a prior
+        # `_cleanup_after_startup_failure` (which sets the event).
+        self._close_event.clear()
         self._reader_task = asyncio.create_task(self._read_stdout_loop(), name="pi-rpc-stdout")
         self._stderr_task = asyncio.create_task(self._read_stderr_loop(), name="pi-rpc-stderr")
         await asyncio.sleep(min(0.2, max(0.0, self.config.startup_timeout)))
         if self.process.returncode is not None:
-            # Pi exited during startup. Clean up the two reader tasks and the
-            # subprocess handle before raising — otherwise the tasks live on
-            # against a dead process, leaking into the loop's task set and
-            # surfacing as warnings (or hangs at loop teardown) downstream.
+            # Pi exited during startup. Capture the returncode and stderr
+            # BEFORE the cleanup call — F24 nullifies `self.process` so the
+            # error-message line can no longer read `.returncode` from it.
+            exit_code = self.process.returncode
+            stderr_snapshot = self.stderr
+            # Clean up the two reader tasks and the subprocess handle before
+            # raising — otherwise the tasks live on against a dead process,
+            # leaking into the loop's task set and surfacing as warnings
+            # (or hangs at loop teardown) downstream.
             await self._cleanup_after_startup_failure()
             raise PiRpcProcessError(
-                "Pi exited during startup with code "
-                f"{self.process.returncode}. stderr={self.stderr!r}"
+                f"Pi exited during startup with code {exit_code}. stderr={stderr_snapshot!r}"
             )
 
     async def _cleanup_after_startup_failure(self) -> None:
         """Best-effort teardown when the startup probe finds pi already exited."""
         self._closed = True
+        # F33: wake any next_event() waiters before they hang.
+        self._close_event.set()
         proc = self.process
         if proc is not None and proc.stdin and not proc.stdin.is_closing():
             with contextlib.suppress(BrokenPipeError, ConnectionResetError, RuntimeError):
@@ -215,9 +229,18 @@ class PiRpcClient:
         if proc is not None:
             with contextlib.suppress(asyncio.TimeoutError, ProcessLookupError):
                 await asyncio.wait_for(proc.wait(), timeout=1.0)
+        # F24: null `self.process` so a subsequent `start()` call doesn't trip
+        # the "PiRpcClient already started" guard. After cleanup the client
+        # is effectively in the never-started state. Note: `self._closed`
+        # stays True so a later `close()` short-circuits cleanly, but `start()`
+        # only checks `self.process` so retry works.
+        self.process = None
 
     async def close(self) -> None:
         self._closed = True
+        # F33: wake any pending next_event()/wait_for_event() coroutines so
+        # they raise rather than hang on the queue.
+        self._close_event.set()
         proc = self.process
         if proc is None:
             return
@@ -256,6 +279,18 @@ class PiRpcClient:
         request = dict(command)
         request_id = str(request.get("id") or self._next_request_id())
         request["id"] = request_id
+        # F34: a caller that supplies its own `id` could collide with an
+        # already-pending request. Overwriting `_pending[request_id]` would
+        # orphan the prior future (its response arrives, finds the new
+        # future, sets the wrong result; the original caller hangs on
+        # wait_for). Reject the collision loudly instead.
+        if request_id in self._pending:
+            raise PiRpcError(
+                str(request.get("type", "unknown")),
+                f"duplicate request id {request_id!r}; another send() is already "
+                "pending under this id. Omit `id` to let PiRpcClient assign one.",
+                {},
+            )
         loop = asyncio.get_running_loop()
         future: asyncio.Future[JsonObject] = loop.create_future()
         self._pending[request_id] = future
@@ -419,9 +454,35 @@ class PiRpcClient:
         return dict((await self.send({"type": "bash", "command": command})).get("data") or {})
 
     async def next_event(self, *, timeout: float | None = None) -> JsonObject:
-        if timeout is None:
-            return await self._events.get()
-        return await asyncio.wait_for(self._events.get(), timeout=timeout)
+        # F33: race the queue.get() against close_event so a concurrent
+        # close() (or startup-failure cleanup) unblocks rather than hangs.
+        if self._closed:
+            raise PiRpcError(
+                "next_event",
+                "PiRpcClient is closed; no further events will be delivered",
+            )
+        get_task = asyncio.create_task(self._events.get())
+        close_task = asyncio.create_task(self._close_event.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {get_task, close_task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            if not get_task.done():
+                get_task.cancel()
+            if not close_task.done():
+                close_task.cancel()
+        if get_task in done:
+            return get_task.result()
+        if close_task in done:
+            raise PiRpcError(
+                "next_event",
+                "PiRpcClient closed while awaiting next_event; no further events",
+            )
+        # Neither task completed — must be a timeout. Mirror asyncio.wait_for.
+        raise TimeoutError("next_event timed out")
 
     async def wait_for_event(self, event_type: str, *, timeout: float | None = None) -> JsonObject:
         while True:

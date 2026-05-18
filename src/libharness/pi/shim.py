@@ -6,6 +6,21 @@ import json
 from pathlib import Path
 from typing import Any
 
+from libharness.pi.hook_surface import AgentHookSurface
+
+
+def _render_decision_events_ts_array() -> str:
+    """Render the TS ``DECISION_EVENTS`` array body from the Python source of truth.
+
+    Pulls names from :class:`AgentHookSurface._DECISION_EVENT_NAMES` and emits
+    them in a stable ``sorted(...)`` order so the generated shim is
+    byte-deterministic. Eliminates the drift vector flagged as A.2 / F27.
+    """
+
+    names = sorted(AgentHookSurface._DECISION_EVENT_NAMES)
+    lines = [f"  {json.dumps(name, ensure_ascii=False)}," for name in names]
+    return "\n".join(lines)
+
 
 def write_bridge_shim(path: str | Path, *, diagnostic_commands: bool = True) -> Path:
     path = Path(path)
@@ -13,6 +28,7 @@ def write_bridge_shim(path: str | Path, *, diagnostic_commands: bool = True) -> 
     text = PRODUCTION_TS_SHIM.replace(
         "__DIAGNOSTIC_COMMANDS__", "true" if diagnostic_commands else "false"
     )
+    text = text.replace("__DECISION_EVENTS__", _render_decision_events_ts_array())
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -76,26 +92,11 @@ const BRIDGE_TIMEOUT_MS = Number(process.env.PI_PY_BRIDGE_TIMEOUT_MS ?? "120000"
 const DIAGNOSTIC_COMMANDS =
   __DIAGNOSTIC_COMMANDS__ && process.env.PI_PY_DIAGNOSTIC_COMMANDS !== "0";
 
+// DECISION_EVENTS is generated from Python `AgentHookSurface._DECISION_EVENT_NAMES`
+// at shim-write time (see `write_bridge_shim` in shim.py). Single source of truth;
+// names are emitted in sorted order for determinism (A.2 / F27).
 const DECISION_EVENTS = [
-  "resources_discover",
-  "session_start",
-  "session_before_switch",
-  "session_before_fork",
-  "session_before_compact",
-  "session_compact",
-  "session_shutdown",
-  "session_before_tree",
-  "session_tree",
-  "context",
-  "before_provider_request",
-  "after_provider_response",
-  "before_agent_start",
-  "model_select",
-  "thinking_level_select",
-  "tool_call",
-  "tool_result",
-  "user_bash",
-  "input",
+__DECISION_EVENTS__
 ] as const;
 
 function strictSchema(schema: JsonObject | undefined): any {
@@ -157,7 +158,11 @@ async function bridgeCall<T = any>(
   }
 
   const id = randomUUID();
-  const request = { id, type, token: TOKEN, ...payload };
+  // Framework keys MUST appear after the payload spread so that a user-supplied
+  // payload containing `type`, `id`, or `token` cannot silently corrupt the wire
+  // frame. Mirrors the Python-side fix at rpc.py for extension_ui_response
+  // (see dev-notes/2026-05-17-v8-port-deferred-items.md § F36).
+  const request = { ...payload, id, type, token: TOKEN };
 
   return await new Promise<T>((resolve, reject) => {
     const socket = net.createConnection({ host: HOST, port: PORT });
@@ -243,7 +248,8 @@ async function bridgeCall<T = any>(
 function bridgeNotify(type: string, payload: JsonObject = {}): Promise<void> {
   if (!PORT || !TOKEN) return Promise.resolve();
   const id = randomUUID();
-  const request = { id, type, token: TOKEN, ...payload };
+  // Framework keys after payload spread; see bridgeCall comment for rationale.
+  const request = { ...payload, id, type, token: TOKEN };
   return new Promise<void>((resolve, reject) => {
     const socket = net.createConnection({ host: HOST, port: PORT });
     let settled = false;

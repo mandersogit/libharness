@@ -136,6 +136,9 @@ async def test_startup_probe_cleanup_on_pi_exit() -> None:
     assert client._reader_task is None
     assert client._stderr_task is None
 
-    # The subprocess handle should have a definite returncode (was reaped).
-    assert client.process is not None
-    assert client.process.returncode is not None
+    # F24 (ergonomic-pass batch 3): cleanup now also nulls `self.process`
+    # so a subsequent `start()` call can proceed. Pre-F24 the assertion
+    # was `client.process is not None` plus a `.returncode is not None`
+    # reap check; post-F24 the reap check happened inside the cleanup
+    # helper (via `await proc.wait()`) and `self.process` is cleared.
+    assert client.process is None

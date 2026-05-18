@@ -79,7 +79,7 @@ Decisions the author made during the design-review phase that say "yes, this is 
 
 **Why deferred:** drift is detectable at the Python layer (taxonomy test catches it); the TS-side check is a hardening pass. A new pi event wouldn't cause silent corruption — it would simply not fire any hook.
 
-**Recommendation: Fix now.** The fix is to generate the TS array from `_DECISION_EVENT_NAMES` at shim-write time. ~10-20 LOC in `write_bridge_shim`. Eliminates a real drift vector with one source of truth; future me will thank current me when pi adds a new event and the regen is one place instead of two.
+**Status: DONE (ergonomic-pass batch 3).** Delegated to an Opus subagent. The TS shim's `DECISION_EVENTS` array is now generated from `AgentHookSurface._DECISION_EVENT_NAMES` at `write_bridge_shim` time via a new `__DECISION_EVENTS__` placeholder. Sorted output ensures deterministic shim generation; the new `test_generated_shim_decision_events_matches_python_source` test pins the invariant. Single source of truth eliminates drift.
 
 ### A.3: Item D — `_handler_wants_context` heuristic edge cases
 
@@ -137,24 +137,24 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 | F15 | MOD  | `close()` hangs if reader awaits handler that swallows CancelledError  | Fix   |
 | F16 | MOD  | `ProcessLookupError` during SIGTERM aborts `close()` cleanup           | Fix   |
 | F17 | MOD  | `Agent` not exercised in the 13-test suite                             | Done  |
-| F19 | MIN  | `_decision_timeouts_for_manifest` advertises timeouts for closed gates | Fix   |
+| F19 | MIN  | `_decision_timeouts_for_manifest` advertises timeouts for closed gates | Done  |
 | F20 | MIN  | `context or {}` falsy coercion                                         | Done  |
 | F21 | MIN  | `AgentHookSurface` subclasses can bypass validation                    | Defer |
 | F22 | MIN  | Sync notification hooks returning awaitables: silently dropped         | Done  |
 | F23 | MIN  | Timeout validator accepts non-int values (`True`, `0.5`)               | Done  |
-| F24 | MIN  | Failed `start()` leaves `self.process` set, blocking retry             | Fix   |
+| F24 | MIN  | Failed `start()` leaves `self.process` set, blocking retry             | Done  |
 | F25 | MIN  | Constructor-passed `decision_timeouts_ms` skips validation             | Done  |
 | F26 | MIN  | Decision-hook exception logged twice (= Item A)                        | Done  |
-| F27 | MIN  | Shim-side `_DECISION_EVENT_NAMES` drift (= Item B)                     | Fix   |
+| F27 | MIN  | Shim-side `_DECISION_EVENT_NAMES` drift (= Item B)                     | Done  |
 | F28 | MIN  | `cast(object, Agent)` workaround needs comment                         | Done  |
 | F29 | MIN  | `PiLaunchConfig.startup_timeout` misnamed (sleeps ≤0.2s)               | Done  |
 | F30 | MIN  | Test asserts state but not order of cleanup                            | Defer |
 | F31 | MIN  | Consistency-check helper only runs on the base                         | Defer |
 | F32 | MIN  | `_check_owner` error message missing harness_id                        | Done  |
-| F33 | MIN  | `next_event()`/`wait_for_event()` waiters never unblocked on `close()` | Fix   |
-| F34 | MIN  | Caller-supplied duplicate request IDs can overwrite `_pending`         | Fix   |
+| F33 | MIN  | `next_event()`/`wait_for_event()` waiters never unblocked on `close()` | Done  |
+| F34 | MIN  | Caller-supplied duplicate request IDs can overwrite `_pending`         | Done  |
 | F35 | MIN  | Tool params named `context`/`ctx` get silently hijacked                | Done  |
-| F36 | MIN  | Same key-precedence footgun in `shim.py`'s `bridgeCall`/`bridgeNotify` | Fix   |
+| F36 | MIN  | Same key-precedence footgun in `shim.py`'s `bridgeCall`/`bridgeNotify` | Done  |
 
 **Detail (Tier-2 items I recommend keeping deferred):**
 
@@ -280,15 +280,15 @@ The *feature* is supported; only the *test* is missing. Not a real deferral. Fol
 
 | Recommendation                        | Count |
 | ------------------------------------- | ----- |
-| **Fix now** — ergonomic-pass backlog  | 12    |
+| **Fix now** — ergonomic-pass backlog  | 6     |
 | **Remain deferred** — strong position | 10    |
-| **Done**                              | 16    |
+| **Done**                              | 22    |
 
 **Detail (which items go in each bucket):**
 
-- *Fix now (12, remaining ergonomic-pass backlog):* A.2 (= F27), F8, F9, F13, F14, F15, F16, F19, F24, F33, F34, F36.
+- *Fix now (6, remaining ergonomic-pass backlog — threading-model audit):* F8, F9, F13, F14, F15, F16.
 - *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass — risk now documented in `AgentHookSurface` docstring), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
-- *Done (16):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 (this commit) — A.3 / F10, F11, F12, F22, F23, F25.
+- *Done (22):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 (this commit) — A.2 / F27, F19, F24, F33, F34, F36.
 
 26 fix-now items + the carrying of A.5 (HITL no-default-timeout, already resolved) and A.4 (cosmetic wire-frame names). The fix-now set clusters cleanly into:
 

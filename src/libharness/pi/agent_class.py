@@ -228,11 +228,18 @@ class Agent(AgentHookSurface, PiAgentHarness):
 
     @classmethod
     def _decision_timeouts_for_manifest(cls) -> dict[str, int]:
+        # F19: only emit timeouts for events whose gates are actually open
+        # (i.e., the subclass defines `decide_X` or `async_decide_X`). A
+        # timeout for a closed gate is unused noise in the manifest — pi
+        # never blocks on a closed-gate event.
+        open_gates = cls._initial_open_gates_for_class()
         result: dict[str, int] = {}
         if cls._decision_timeout_ms is not None:
-            for event_name in cls._initial_open_gates_for_class():
+            for event_name in open_gates:
                 result[event_name] = cls._decision_timeout_ms
-        result.update(dict(cls._decision_timeouts_ms))
+        for event_name, timeout in cls._decision_timeouts_ms.items():
+            if event_name in open_gates:
+                result[event_name] = timeout
         return result
 
 

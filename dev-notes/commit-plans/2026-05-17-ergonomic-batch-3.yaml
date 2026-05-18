@@ -1,0 +1,104 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): ergonomic-pass batch 3 — wire/protocol bug fixes
+
+      Third batch of post-Gate-C fixes. Six items split across rpc.py
+      (4), agent_class.py (1), and shim.py (2 delegated to Opus subagent
+      in a worktree).
+
+      ## rpc.py / agent_class.py (inline)
+
+      **F19 — `_decision_timeouts_for_manifest` filters to open gates.**
+      Pre-fix: every entry in `_decision_timeouts_ms` shipped in the
+      manifest, including entries for events whose gates were closed
+      (no `decide_X` hook defined). Post-fix: the helper computes the
+      open-gate set first and only emits timeouts for those events.
+      Both the global-default path (`_decision_timeout_ms`) and the
+      per-event override path (`_decision_timeouts_ms`) get filtered.
+
+      **F24 — Failed `start()` nulls `self.process` so retry works.**
+      Pre-fix: `_cleanup_after_startup_failure` set `_closed = True`
+      and cleared the reader-task slots but left `self.process` set;
+      a retry hit "PiRpcClient is already started". Post-fix: cleanup
+      also sets `self.process = None`. The PiRpcProcessError message
+      (which used to read `self.process.returncode` AFTER cleanup,
+      now-broken) was reworked to capture the returncode + stderr
+      BEFORE the cleanup call. The existing F7 cherry-pick regression
+      test was updated: post-F24 the cleanup signal is `process is
+      None` rather than `process.returncode is not None`.
+
+      **F33 — `close()` unblocks pending `next_event()` waiters.**
+      Pre-fix: a coroutine awaiting `client.next_event()` would hang
+      forever if `close()` ran concurrently — the queue had no
+      sentinel and the awaiter never returned. Post-fix: added a new
+      `_close_event: asyncio.Event` on `PiRpcClient`. `next_event()`
+      races `self._events.get()` against `self._close_event.wait()`
+      via `asyncio.wait(..., return_when=FIRST_COMPLETED)`; on close
+      it raises `PiRpcError` instead of hanging. `start()` clears the
+      event so a retry after `_cleanup_after_startup_failure` (which
+      also signals close) works correctly. The early-return path is
+      now `if self._closed: raise PiRpcError(...)` so even pre-close
+      callers fail fast.
+
+      **F34 — Duplicate request IDs rejected.** Pre-fix: `send(
+      {"id": "X", ...})` with an already-pending `id` `"X"` would
+      overwrite `_pending["X"]` with the new future; the prior
+      caller's response would land on the new future and the prior
+      caller would hang. Post-fix: explicit collision check raises
+      `PiRpcError("duplicate request id ...")` before the
+      `_pending` insert. The framework-assigned ids via
+      `_next_request_id` (UUID-based) never collide; the check
+      only fires for caller-supplied ids.
+
+      ## shim.py (Opus subagent in worktree)
+
+      **A.2 / F27 — Generate `DECISION_EVENTS` TS array from Python.**
+      Pre-fix: the TS shim hardcoded a 19-name `DECISION_EVENTS = [...]`
+      array. The Python `_DECISION_EVENT_NAMES` frozenset is validated
+      against pi-mono source by `test_pi_event_taxonomy.py`, but the
+      TS array got no such check. Post-fix: `write_bridge_shim`
+      interpolates the names from `_DECISION_EVENT_NAMES` (sorted for
+      determinism) via a new `__DECISION_EVENTS__` placeholder and
+      `_render_decision_events_ts_array()` helper. Single source of
+      truth; drift impossible.
+
+      **F36 — Bridge dict-merge order in `bridgeCall` / `bridgeNotify`.**
+      Mirror of the Phase 5.5 `rpc.py:411` fix on the TS side. Pre-fix:
+      `{ id, type, token: TOKEN, ...payload }` — payload's spread is
+      LAST and `last-wins` in TS object literals; a payload containing
+      `id`/`type`/`token` would silently corrupt the framework keys.
+      Post-fix: `{ ...payload, id, type, token: TOKEN }`.
+
+      ## Tests
+
+      Cluster 3 file `tests/pi/test_ergonomic_pass_cluster3.py` carries
+      11 tests:
+
+      - From the Opus subagent (5): generated-shim equality,
+        deterministic rendering, placeholder presence, framework-keys-
+        win for both `bridgeCall` and `bridgeNotify`.
+      - From this commit (6): F19 filters-to-open-gates (×2 cases),
+        F24 retry-after-failure (×1), F33 close-unblocks-next_event +
+        next_event-on-closed-raises (×2), F34 duplicate-id-rejected (×1).
+
+      ## Acceptance
+
+      - 113 tests pass on `local.venv` (3.11) and `local-ft.venv`
+        (3.14t). Up from 102.
+      - Ruff / mypy / pyright clean.
+      - F7 cherry-pick test updated to reflect F24's `process is None`
+        semantics (was `process is not None`).
+
+      Deferred-items doc rolls forward: 6 fix-now remaining (all
+      threading-model audit: F8, F9, F13, F14, F15, F16), 10
+      remain-deferred, 22 done (was 12/10/16).
+    files:
+      - src/libharness/pi/agent_class.py
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/shim.py
+      - tests/pi/test_v8_cherrypick_fixes.py
+      - tests/pi/test_ergonomic_pass_cluster3.py
+      - dev-notes/2026-05-17-v8-port-deferred-items.md
+      - dev-notes/commit-plans/2026-05-17-ergonomic-batch-3.yaml
