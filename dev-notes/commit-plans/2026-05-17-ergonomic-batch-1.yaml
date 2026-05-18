@@ -1,0 +1,124 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): ergonomic-pass batch 1 — diagnostics + session wrappers + generator test
+
+      First batch of post-Gate-C "fix now" items from
+      `dev-notes/2026-05-17-v8-port-deferred-items.md`. Bundles three
+      independent surfaces that landed concurrently (cluster 1
+      diagnostics inline; D.2 session wrappers + E.1 generator test
+      delegated to parallel Opus subagents in worktrees).
+
+      ## Cluster 1 — diagnostics / docs (inline)
+
+      - **A.1 / F26 — Decision-hook exception logged once, not twice.**
+        Inner `_dispatch_decision_hook` catch in `agent_class.py` sets
+        `exc._libharness_logged = True` before re-raising; outer
+        `server.py:_dispatch_bridge_event` catch checks the sentinel
+        and skips the duplicate log. Test: a sync `decide_X` raises and
+        `caplog` captures exactly one entry mentioning the failure.
+      - **F28 — Comment on `cast(object, Agent)` pyright workaround.**
+        Documents why we need it (pyright literal-value narrowing on
+        the 112 ClassVars; mypy doesn't need this).
+      - **F29 — Docstring on `PiLaunchConfig.startup_timeout`.** Calls
+        out the field's misleading name (probe sleeps `min(0.2,
+        max(0.0, startup_timeout))`); explains why renaming would churn
+        the public API and what trigger would justify a real fix.
+      - **F32 — `_check_owner` error message names the harness.**
+        Multi-harness deployments now identify which instance was
+        misused. Test asserts `harness_id` is in the error message.
+      - **F35 — Tool params named `ctx`/`context`/`tool_context` with
+        non-ToolContext annotations now raise `ToolError` at
+        decoration time.** Pre-fix: silently hijacked as the
+        ToolContext sentinel. Post-fix: extracted a new
+        `_hint_includes_tool_context` helper that accepts `ToolContext`
+        directly OR a `Union` (including `T | None`) that contains it;
+        anything else with a reserved name raises. Tests cover all
+        three reserved names plus the canonical patterns (bare `ctx`,
+        `ctx: ToolContext`, and existing `ToolContext | None` callers
+        from the v5 test suite).
+      - **F21 — `AgentHookSurface` docstring documents the
+        direct-subclassing risk.** Per the user's explicit ask: a
+        long docstring explains that subclassing `AgentHookSurface`
+        without going through `Agent` bypasses the validation
+        classmethods. Points at the deferred-items doc for the trigger
+        condition (move `__init_subclass__` onto `AgentHookSurface` if
+        a real use case surfaces).
+
+      ## D.2 — Pi-native session method wrappers (Opus subagent)
+
+      Seven new typed methods on `PiRpcClient`:
+
+      - `fork(entry_id: str)` — fork the current session at the named
+        entry.
+      - `clone()` — clone the current session at its leaf.
+      - `switch_session(session_path: str)` — pi addresses sessions by
+        path, not id.
+      - `get_session_stats()` — stats for the current session.
+      - `export_html(output_path: str | None = None)` — export to HTML.
+      - `set_session_name(name: str)` — rename the current session.
+      - `get_fork_messages()` — messages relevant to fork points.
+
+      **The subagent verified pi's actual RPC contract in pi-mono's
+      `packages/coding-agent/src/modes/rpc/rpc-types.ts` and
+      `rpc-mode.ts`** and used pi's narrower argument shapes (no
+      `parent_session_id` or `session_id` overrides — pi's surface
+      operates on the current session; users call `switch_session`
+      first if they need a different one). The wrapper docstrings
+      explicitly note the "current session" semantics.
+
+      Tests in `tests/pi/test_session_wrappers.py` (15 tests / 8
+      dedicated + 1 parametrized covering all 7 methods); `fake_pi_rpc.py`
+      extended with an echo branch for the new request types so tests
+      assert on the wire shape the client serializes (mirrors the
+      existing `set_model` echo pattern).
+
+      ## E.1 — Generator-through-bridge regression test (Opus subagent)
+
+      `tests/pi/test_generator_through_bridge.py` with two tests
+      exercising the sync-generator and async-generator paths in
+      `tools.py:collect_tool_result` end-to-end through `PythonToolServer`'s
+      real loopback TCP wire:
+
+      - Sync generator that yields 4 values produces 4 `update` frames
+        + 1 `response` frame with matching `id` and the last yield as
+        data.
+      - Async generator that yields 3 values (with `await
+        asyncio.sleep(0)` between) produces 3 updates + 1 response.
+
+      The subagent's finding: the generator path is intact under v8;
+      no regression. The pre-port test gap was real but the underlying
+      code path survived every iteration v3 → v8 correctly.
+
+      ## Acceptance
+
+      - 80 tests pass on `local.venv` (3.11) and `local-ft.venv`
+        (3.14t). Up from 56 (= +24: 7 cluster 1 + 15 session wrappers
+        + 2 generator).
+      - Live tests still pass (no change to wire surface that they
+        exercise).
+      - Ruff / mypy / pyright clean.
+      - The F21 docstring is the user's explicit ask to document the
+        risk (after deciding to keep the item deferred).
+
+      ## Deferred-items doc updated
+
+      `dev-notes/2026-05-17-v8-port-deferred-items.md` rolls forward
+      with each completed item marked DONE (A.1, F26, F28, F29, F32,
+      F35, D.2, E.1) and the F21 detail entry noting that the
+      docstring landed. Recommendations summary updated: 18 remaining
+      fix-now items, 10 remain-deferred, 10 done (up from 26/10/2).
+    files:
+      - src/libharness/pi/agent.py
+      - src/libharness/pi/agent_class.py
+      - src/libharness/pi/server.py
+      - src/libharness/pi/tools.py
+      - src/libharness/pi/hook_surface.py
+      - src/libharness/pi/rpc.py
+      - tests/pi/fake_pi_rpc.py
+      - tests/pi/test_ergonomic_pass_cluster1.py
+      - tests/pi/test_session_wrappers.py
+      - tests/pi/test_generator_through_bridge.py
+      - dev-notes/2026-05-17-v8-port-deferred-items.md
+      - dev-notes/commit-plans/2026-05-17-ergonomic-batch-1.yaml

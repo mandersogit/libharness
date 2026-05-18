@@ -337,6 +337,21 @@ def _validate_name(name: str) -> None:
         )
 
 
+def _hint_includes_tool_context(hint: Any) -> bool:
+    """Return True if `hint` is `ToolContext` exactly or a Union that includes it.
+
+    Accepts `ToolContext`, `ToolContext | None`, `Optional[ToolContext]`,
+    `ToolContext | OtherType`, etc. Used by `_detect_context_param` and
+    by the F35 incompatible-annotation guard.
+    """
+    if hint is ToolContext:
+        return True
+    origin = get_origin(hint)
+    if origin is Union or origin is UnionType:
+        return any(arg is ToolContext for arg in get_args(hint))
+    return False
+
+
 def _detect_context_param(fn: Callable[..., Any]) -> tuple[str | None, bool]:
     try:
         hints = get_type_hints(fn)
@@ -345,9 +360,24 @@ def _detect_context_param(fn: Callable[..., Any]) -> tuple[str | None, bool]:
     sig = inspect.signature(fn)
     for param_name, param in sig.parameters.items():
         hint = hints.get(param_name, param.annotation)
-        if param_name in {"ctx", "context", "tool_context"}:
-            return param_name, True
-        if hint is ToolContext:
+        name_reserved = param_name in {"ctx", "context", "tool_context"}
+        hint_is_context = _hint_includes_tool_context(hint)
+        has_annotation = hint is not inspect._empty
+        # F35: if the parameter NAME matches the ToolContext-detection set but
+        # the parameter is annotated as something incompatible (e.g.
+        # `context: str`), the user almost certainly didn't intend their
+        # string-typed param to be silently hijacked as the ToolContext
+        # sentinel. Raise loudly at decoration time so the user can either
+        # rename the parameter or fix the annotation. `ToolContext | None`
+        # and other Unions that include `ToolContext` are accepted.
+        if name_reserved and has_annotation and not hint_is_context:
+            raise ToolError(
+                f"tool {fn.__name__!r} parameter {param_name!r} has annotation "
+                f"{hint!r} but the name is reserved for the ToolContext sentinel. "
+                "Either annotate it as `ToolContext` (or a Union including it), "
+                "or rename the parameter."
+            )
+        if name_reserved or hint_is_context:
             return param_name, True
     return None, False
 

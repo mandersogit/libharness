@@ -69,7 +69,7 @@ Decisions the author made during the design-review phase that say "yes, this is 
 
 **Why deferred:** cosmetic. The fail-open behavior is correct (pi proceeds as if no decision was made); the duplicate log is mildly noisy but useful for debugging in different layers. No silent-failure or correctness concern.
 
-**Recommendation: Fix now.** Cheap (set a sentinel attribute on the exception object on the inner catch; outer catch checks it before logging). ~5 LOC + 1 test. The author resolution was "defer to ergonomic pass" not "don't fix" — given bias-not-to-defer, this is small enough to fold into a Tier-2 cleanup commit.
+**Status: DONE (ergonomic-pass batch 1).** Inner `_dispatch_decision_hook` catch in `agent_class.py` sets `exc._libharness_logged = True` before re-raising; outer `server.py:_dispatch_bridge_event` catch checks the sentinel and skips the duplicate log. Regression test in `tests/pi/test_ergonomic_pass_cluster1.py::test_decision_hook_exception_logged_once` pins the one-log behavior via caplog.
 
 ### A.2: Item B — shim-side `DECISION_EVENTS` array not validated against pi source
 
@@ -99,7 +99,7 @@ Decisions the author made during the design-review phase that say "yes, this is 
 
 **Why deferred:** purely cosmetic. Pi never sees these frames — they're internal Python ↔ TS bridge envelopes. The names are consistent on both sides of the bridge.
 
-**Recommendation: Remain deferred.** This is genuinely cosmetic — the names work, are consistent across both sides, and renaming would churn the protocol with zero gain. There's no audience that benefits from `event_name` over `event`: pi doesn't see them, users never write them, the docs match the implementation. The original analysis-prompt convention was a draft, not a requirement. Defer is correct; revisit only if a different audience materializes (e.g., third-party shim authors who'd find verbose names easier to skim).
+**Status: Remain deferred (confirmed).** This is genuinely cosmetic — the names work, are consistent across both sides, and renaming would churn the protocol with zero gain. There's no audience that benefits from `event_name` over `event`: pi doesn't see them, users never write them, the docs match the implementation. The original analysis-prompt convention was a draft, not a requirement. Defer is correct; revisit only if a different audience materializes (e.g., third-party shim authors who'd find verbose names easier to skim).
 
 ### A.5: Default `_decision_timeout_ms = 30000` rejected (HITL case)
 
@@ -144,23 +144,23 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 | F23 | MIN  | Timeout validator accepts non-int values (`True`, `0.5`)               | Fix   |
 | F24 | MIN  | Failed `start()` leaves `self.process` set, blocking retry             | Fix   |
 | F25 | MIN  | Constructor-passed `decision_timeouts_ms` skips validation             | Fix   |
-| F26 | MIN  | Decision-hook exception logged twice (= Item A)                        | Fix   |
+| F26 | MIN  | Decision-hook exception logged twice (= Item A)                        | Done  |
 | F27 | MIN  | Shim-side `_DECISION_EVENT_NAMES` drift (= Item B)                     | Fix   |
-| F28 | MIN  | `cast(object, Agent)` workaround needs comment                         | Fix   |
-| F29 | MIN  | `PiLaunchConfig.startup_timeout` misnamed (sleeps ≤0.2s)               | Fix   |
+| F28 | MIN  | `cast(object, Agent)` workaround needs comment                         | Done  |
+| F29 | MIN  | `PiLaunchConfig.startup_timeout` misnamed (sleeps ≤0.2s)               | Done  |
 | F30 | MIN  | Test asserts state but not order of cleanup                            | Defer |
 | F31 | MIN  | Consistency-check helper only runs on the base                         | Defer |
-| F32 | MIN  | `_check_owner` error message missing harness_id                        | Fix   |
+| F32 | MIN  | `_check_owner` error message missing harness_id                        | Done  |
 | F33 | MIN  | `next_event()`/`wait_for_event()` waiters never unblocked on `close()` | Fix   |
 | F34 | MIN  | Caller-supplied duplicate request IDs can overwrite `_pending`         | Fix   |
-| F35 | MIN  | Tool params named `context`/`ctx` get silently hijacked                | Fix   |
+| F35 | MIN  | Tool params named `context`/`ctx` get silently hijacked                | Done  |
 | F36 | MIN  | Same key-precedence footgun in `shim.py`'s `bridgeCall`/`bridgeNotify` | Fix   |
 
 **Detail (Tier-2 items I recommend keeping deferred):**
 
 - *F17 — Done.* The synthesis doc was written against the pre-Phase-6 state (13 tests). After Phase 6, `tests/pi/test_agent_class.py` has 16 tests against Agent (including 3 strict-mode E2E tests for decision events from Item C), and `test_decision_hooks.py` / `test_channel_separation.py` exercise the surface further. The 56-test suite resolves the bulk of this finding. Any remaining gaps are absorbed by the future tests for the other fixes.
 - *F20 — Done.* Already folded into commit `4d0bee1` (Tier-1 fixes) per the synthesizer's note. Listed in the table for completeness; no action needed.
-- *F21 — Remain deferred.* Subclassing `AgentHookSurface` directly (without going through `Agent`) is not a documented or supported user pattern. Adding the `__init_subclass__` validation to `AgentHookSurface` changes the invariant about who validates whose surface and could surprise the (currently zero) users who subclass the mixin to compose differently. Defer until a real use case materializes.
+- *F21 — Remain deferred (risk now documented in docstring).* Subclassing `AgentHookSurface` directly (without going through `Agent`) is not a documented or supported user pattern. Adding the `__init_subclass__` validation to `AgentHookSurface` changes the invariant about who validates whose surface and could surprise the (currently zero) users who subclass the mixin to compose differently. Defer until a real use case materializes. As of ergonomic-pass batch 1: the `AgentHookSurface` class docstring now explicitly documents the risk and points at this entry, so a future direct-subclasser sees the warning before they trip the gap.
 - *F30 — Remain deferred.* The existing cherry-pick test asserts the post-cleanup state (task slots null, process reaped). Strengthening it to assert the *order* of cleanup operations would require instrumenting the helper with a counter or monkeypatching the asyncio.gather call. The test surface lives in the right spirit; adding fragility for theoretical order-bug protection isn't worth it. Defer until someone actually changes the cleanup order and breaks the spirit.
 - *F31 — Remain deferred.* The consistency-check helper guards the *library's* declarative surface. Running it on every user subclass adds runtime cost on every Agent subclass instantiation. User subclasses that drift from the library surface fail validation differently (the existing `_validate_declared_hook_names` covers user-side typos in hook names). Library-side drift is what matters; library-side drift is what the helper catches. Defer indefinitely.
 
@@ -208,7 +208,7 @@ Folded into the Gate A.5 Tier-1 fix commit per synthesizer's note. Listed here f
 
 **Why deferred:** independent of v8 port; predates it.
 
-**Recommendation: Fix now.** A defined task with no open design questions, ~100-150 LOC, no v8 dependency. Closing it now rather than carrying it forward is the right call given bias-not-to-defer. Land as a separate commit (not bundled with v8 work) since it's an orthogonal feature, but in the same sprint.
+**Status: DONE (ergonomic-pass batch 1).** Delegated to an Opus subagent that verified pi's actual RPC contract in pi-mono's `rpc-types.ts` + `rpc-mode.ts` and used pi's narrower argument shapes (e.g., `fork(entry_id: str)` operating on the current session — pi doesn't expose a `parent_session_id` parameter). 7 typed methods added; 15 tests in `tests/pi/test_session_wrappers.py` pin the wire shape via the same `data.received: request` echo pattern the existing `set_model` test uses.
 
 ### D.3: `PiPythonHarness` deprecation
 
@@ -238,7 +238,7 @@ Covered in A.1. Recommendation: Fix now.
 
 **Why deferred:** the test gap is real but v8 preserves the path; the gap survived the v8 port.
 
-**Recommendation: Fix now.** A real test gap that would catch a real regression. Effort: ~30-50 LOC (a fake-pi script that runs a sync-generator handler + assertions on the wire shape of intermediate updates). Bias-not-to-defer plus the closing-a-known-gap value makes this an easy yes.
+**Status: DONE (ergonomic-pass batch 1).** Delegated to an Opus subagent. `tests/pi/test_generator_through_bridge.py` covers both the sync-generator path (`inspect.isgenerator` branch in `collect_tool_result`) and the async-generator path (`inspect.isasyncgen`). Subagent's finding: the generator path is intact under v8; no regression. Each test goes through the real `PythonToolServer` loopback TCP wire, asserts N ordered `update` frames followed by exactly one `response` frame with matching `id`. **Behavioral note logged during the test write:** the `for item in value` loop in `collect_tool_result` discards a generator's `return X` (Python `StopIteration(X)` swallow); the *last yielded value* becomes both the final `update` and the `response.data` — the tests assert this actual behavior, not the assumed-but-wrong "yields + return" model.
 
 ### E.2: Generator-through-bridge feature
 
@@ -280,15 +280,15 @@ The *feature* is supported; only the *test* is missing. Not a real deferral. Fol
 
 | Recommendation                        | Count |
 | ------------------------------------- | ----- |
-| **Fix now** — ergonomic-pass sprint   | 26    |
+| **Fix now** — ergonomic-pass backlog  | 18    |
 | **Remain deferred** — strong position | 10    |
-| **Already done**                      | 2     |
+| **Done**                              | 10    |
 
 **Detail (which items go in each bucket):**
 
-- *Fix now (26):* A.1, A.2, A.3 (= F10 = Item D), F8, F9, F11, F12, F13, F14, F15, F16, F19, F22, F23, F24, F25, F26 (= A.1), F27 (= A.2), F28, F29, F32, F33, F34, F35, F36, D.2 (session wrappers), E.1 (generator-through-bridge test). Note: F10 / F26 / F27 are listed alongside their Author-resolution doubles (A.3 / A.1 / A.2) — same fix, different originating doc.
-- *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
-- *Already done (2):* F17 (Agent test coverage — addressed by Phase 6's test port), F20 (folded into commit `4d0bee1`).
+- *Fix now (18, remaining ergonomic-pass backlog):* A.2 (= F27), A.3 (= F10), F8, F9, F11, F12, F13, F14, F15, F16, F19, F22, F23, F24, F25, F33, F34, F36.
+- *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass — risk now documented in `AgentHookSurface` docstring), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
+- *Done (10):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`), A.1 / F26 (decision-hook exception log dedup), F28 (`cast(object, Agent)` comment), F29 (`startup_timeout` docstring), F32 (`_check_owner` error message), F35 (Tool params reserved-name guard), D.2 (session method wrappers), E.1 (generator-through-bridge test).
 
 26 fix-now items + the carrying of A.5 (HITL no-default-timeout, already resolved) and A.4 (cosmetic wire-frame names). The fix-now set clusters cleanly into:
 

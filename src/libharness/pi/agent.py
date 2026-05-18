@@ -495,7 +495,8 @@ class _PiAgentHarnessCore:
     def _check_owner(self) -> None:
         if threading.get_ident() != self.owner_thread_id:
             raise RuntimeError(
-                f"PiAgentHarness core is owned by thread {self.owner_thread_name!r}; "
+                f"PiAgentHarness core (harness_id={self.harness_id!r}) is owned by "
+                f"thread {self.owner_thread_name!r}; "
                 f"current thread is {threading.current_thread().name!r}"
             )
 

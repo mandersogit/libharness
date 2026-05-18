@@ -141,8 +141,11 @@ class Agent(AgentHookSurface, PiAgentHarness):
                     raise TypeError(f"async_decide_{name} must return an awaitable")
                 awaitable = cast(Awaitable[object | None], result)
                 return await awaitable
-            except Exception:
+            except Exception as exc:
                 _LOG.exception("Agent decision hook failed for event %s", name)
+                # Set a sentinel so the outer bridge layer doesn't log this
+                # exception again. See `server.py`:_dispatch_bridge_event.
+                exc._libharness_logged = True  # type: ignore[attr-defined]
                 raise
 
         if sync_handler is not None:
@@ -156,8 +159,9 @@ class Agent(AgentHookSurface, PiAgentHarness):
 
             try:
                 return await loop.run_in_executor(self.runtime.hook_executor, call)
-            except Exception:
+            except Exception as exc:
                 _LOG.exception("Agent decision hook failed for event %s", name)
+                exc._libharness_logged = True  # type: ignore[attr-defined]
                 raise
 
         if self._raise_on_unhandled_event:
@@ -232,4 +236,14 @@ def _handler_wants_context(handler: Callable[..., object]) -> bool:
 
 
 # Keep pyright from narrowing the class attributes to their base-class literal values only.
+#
+# Without this line, pyright performs literal-value narrowing on the 112 ClassVar
+# declarations in `AgentHookSurface` (all of which default to `None`). User
+# subclasses that assign a callable to e.g. `on_agent_start` then trigger
+# spurious `Cannot assign to attribute of type None` errors because pyright
+# believes the attribute's type is `None`, not `SyncAgentHook | None`. Casting
+# the class to `object` forces pyright to drop the narrowing and respect the
+# declared `ClassVar[SyncAgentHook | None]` type. Mypy doesn't need this; only
+# pyright. Tracked as F28 in the deferred-items doc (now just documented, not
+# deferred).
 cast(object, Agent)

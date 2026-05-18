@@ -58,6 +58,15 @@ class PiLaunchConfig:
     session_dir: str | Path | None = None
     session: str | None = None
     startup_timeout: float = 5.0
+    """Upper bound (seconds) on how long `start()` waits before checking whether
+    pi exited early during startup. Misleadingly named: the actual probe sleeps
+    `min(0.2, max(0.0, startup_timeout))`, so values larger than 0.2 are
+    silently capped to 0.2s. Setting this to e.g. 5.0 does NOT extend the
+    startup window — it merely sets the ceiling for the 0.2s clamp. The
+    minimum is honored (i.e., 0 means no sleep). Renaming this field would
+    churn the public API; the field stays misnamed pending a real motivating
+    case to either rename or actually honor a longer timeout via polling.
+    Tracked as F29 in the deferred-items doc."""
     request_timeout: float = 30.0
     extra_args: Sequence[str] = field(default_factory=tuple)
 
@@ -341,6 +350,70 @@ class PiRpcClient:
 
     async def set_model(self, provider: str, model_id: str) -> JsonObject:
         return await self.send({"type": "set_model", "provider": provider, "modelId": model_id})
+
+    async def fork(self, entry_id: str) -> JsonObject:
+        """Fork the current session at ``entry_id``.
+
+        Pi's RPC contract (rpc-types.ts: ``type: "fork"; entryId``) takes the
+        fork point only and operates on the current session — there is no
+        ``parent_session_id`` parameter. Use ``switch_session`` first if you
+        need to fork from a different session.
+        """
+        return await self.send({"type": "fork", "entryId": entry_id})
+
+    async def clone(self) -> JsonObject:
+        """Clone the current session (fork at the current leaf).
+
+        Pi's RPC contract (rpc-types.ts: ``type: "clone"``) takes no
+        arguments — it clones whichever session is currently active. Use
+        ``switch_session`` first to clone a different session.
+        """
+        return await self.send({"type": "clone"})
+
+    async def switch_session(self, session_path: str) -> JsonObject:
+        """Switch to the session stored at ``session_path``.
+
+        Pi's RPC contract (rpc-types.ts: ``type: "switch_session"; sessionPath``)
+        addresses sessions by *path*, not by id.
+        """
+        return await self.send({"type": "switch_session", "sessionPath": session_path})
+
+    async def get_session_stats(self) -> JsonObject:
+        """Return statistics for the current session.
+
+        Pi's RPC contract (rpc-types.ts: ``type: "get_session_stats"``) takes
+        no arguments — stats are always for the current session.
+        """
+        return await self.send({"type": "get_session_stats"})
+
+    async def export_html(self, output_path: str | None = None) -> JsonObject:
+        """Export the current session as HTML.
+
+        Pi's RPC contract (rpc-types.ts: ``type: "export_html"; outputPath?``)
+        operates on the current session; the optional ``output_path`` controls
+        where the HTML file is written.
+        """
+        request: JsonObject = {"type": "export_html"}
+        if output_path is not None:
+            request["outputPath"] = output_path
+        return await self.send(request)
+
+    async def set_session_name(self, name: str) -> JsonObject:
+        """Rename the current session.
+
+        Pi's RPC contract (rpc-types.ts: ``type: "set_session_name"; name``)
+        operates on the current session.
+        """
+        return await self.send({"type": "set_session_name", "name": name})
+
+    async def get_fork_messages(self) -> JsonObject:
+        """Return user messages eligible as fork points for the current session.
+
+        Pi's RPC contract (rpc-types.ts: ``type: "get_fork_messages"``) takes
+        no arguments. The response ``data.messages`` is a list of
+        ``{"entryId": str, "text": str}`` entries.
+        """
+        return await self.send({"type": "get_fork_messages"})
 
     async def bash(self, command: str) -> JsonObject:
         return dict((await self.send({"type": "bash", "command": command})).get("data") or {})

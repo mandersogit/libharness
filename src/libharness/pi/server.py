@@ -251,8 +251,15 @@ class PythonToolServer:
                 return await self.event_handler(event, cancelled, True, _request_id(request))
             try:
                 await self.event_handler(event, cancelled, False, _request_id(request))
-            except Exception:
-                _LOG.exception("Bridge notify_event handler failed for event %s", event_name)
+            except Exception as exc:
+                # The inner decision-hook dispatcher logs the failure and tags
+                # the exception with `_libharness_logged`. Skip re-logging here
+                # to avoid duplicate traceback noise. See agent_class.py
+                # `_dispatch_decision_hook`. Tracked as F26/A.1.
+                if not getattr(exc, "_libharness_logged", False):
+                    _LOG.exception(
+                        "Bridge notify_event handler failed for event %s", event_name
+                    )
             return None
         finally:
             watcher.cancel()

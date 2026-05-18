@@ -85,5 +85,26 @@ for raw in sys.stdin:
                     },
                 }
             )
+    elif typ in {
+        "fork",
+        "clone",
+        "switch_session",
+        "get_session_stats",
+        "export_html",
+        "set_session_name",
+        "get_fork_messages",
+    }:
+        # Echo the request back under `received` so test_session_wrappers.py
+        # can assert on the wire shape the client sent (same pattern as
+        # `set_model` above — pi's real responses differ per command but the
+        # tests pin what the *client* serialized).
+        send(
+            {
+                "type": "response",
+                "id": request.get("id"),
+                "success": True,
+                "data": {"received": request},
+            }
+        )
     else:
         send({"type": "response", "id": request.get("id"), "success": True, "data": {}})

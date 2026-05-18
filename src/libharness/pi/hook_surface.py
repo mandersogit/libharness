@@ -28,6 +28,29 @@ SyncDecisionHook = Callable[..., object | None]
 
 
 class AgentHookSurface:
+    """Declarative hook surface for the :class:`Agent` class.
+
+    Hosts the four event frozensets, the per-instance configuration ClassVars
+    (`_raise_on_unhandled_event`, `_decision_timeout_ms`, `_decision_timeouts_ms`),
+    the four hook type aliases, all 112 hook ClassVar slots
+    (37 sync notification + 37 async notification + 19 sync decision + 19 async
+    decision), and the three `_validate_*` classmethods that `Agent.__init_subclass__`
+    invokes via `cls._validate_*()`.
+
+    **Subclass directly at your own risk.** The canonical user pattern is
+    `class MyAgent(Agent)` — the `Agent` class's `__init_subclass__` calls the
+    `_validate_*` classmethods declared here, which inspect the SUBCLASS's
+    own `__dict__` (not the inherited MRO view) to catch typoed hook names,
+    both-color-defined collisions, and bad timeout values. A user who subclasses
+    `AgentHookSurface` directly (skipping `Agent`) bypasses those triggers —
+    the validation classmethods exist on the class but are not called automatically.
+
+    This deferred risk is tracked as F21 in
+    `dev-notes/2026-05-17-v8-port-deferred-items.md`. The library does not
+    currently document or support direct mixin subclassing; if a real use case
+    surfaces, the right fix is to move `__init_subclass__` onto
+    `AgentHookSurface` so the validation triggers regardless of the path.
+    """
 
     _EVENT_NAMES: ClassVar[frozenset[str]] = frozenset(
         {
