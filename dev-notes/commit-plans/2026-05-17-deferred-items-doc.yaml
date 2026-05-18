@@ -1,0 +1,53 @@
+repo: .
+
+commits:
+  - message: |
+      docs: consolidated deferred-items doc with per-item recommendations
+
+      Adds `dev-notes/2026-05-17-v8-port-deferred-items.md` — the
+      single canonical rollup of everything the v8 port sprint
+      deliberately did not do.
+
+      Previously this information was scattered across four docs:
+
+        - dev-notes/2026-05-17-v8-analysis.md § Items worth discussing
+          (Items A, B, D, F)
+        - dev-notes/2026-05-17-v8-analysis.md § Resolutions
+          (e.g., _decision_timeout_ms None default)
+        - dev-notes/2026-05-17-v8-port-plan.md § Out of scope
+          (architectural skips)
+        - dev-notes/2026-05-17-v8-port-review-synthesis.md § Tier 2
+          (F8-F36 from Gate A.5)
+
+      Plus in-flight deferrals in the journal (Phase 6 Item-E note),
+      longstanding backlog in SESSION-STATE, and roadmap items in
+      DESIGN.md.
+
+      The new doc:
+
+        - Categorizes ~40 entries into 6 categories (A-F) with overlap
+          de-duplication.
+        - Gives each entry: source, what implementing would change,
+          why it was deferred, my Recommendation (fix-now / remain-
+          deferred / already-done) with justification, and a trigger
+          condition for revisiting if deferred.
+        - Provides a recommendations-summary section: 26 items
+          recommended fix-now, 10 strong remain-deferred, 2 already
+          done. The fix-now set clusters into ~4-6 commits for an
+          ergonomic-pass sprint (~500-700 LOC + tests).
+
+      Per the user's bias-not-to-defer: only carries "remain deferred"
+      where there's a strong position (cosmetic with no audience;
+      author resolution explicitly carries weight; forward-looking
+      feature with no current use case; risk-vs-benefit math is
+      lopsided toward defer). Each "remain deferred" entry includes
+      a 2-3 sentence justification — vague "low value" is not
+      sufficient.
+
+      Cross-references the four source docs so this doc serves as the
+      entry point rather than duplicating their detail. Synthesis doc
+      Tier-2 detail is referenced rather than copied; this doc's
+      contribution is the consolidated index + recommendations.
+    files:
+      - dev-notes/2026-05-17-v8-port-deferred-items.md
+      - dev-notes/commit-plans/2026-05-17-deferred-items-doc.yaml

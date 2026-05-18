@@ -1,0 +1,333 @@
+---
+status: Active
+created: '2026-05-17'
+---
+
+# v8 port — deferred items, with justifications and recommendations
+
+Single rollup of everything that was **deliberately not done** during the v8 port sprint. Use this doc when you want to answer "should I do X?" or "why didn't we do Y?" without having to scan the synthesis doc, analysis doc, port plan, and journal separately.
+
+Each entry has: where it was originally deferred, what implementing it would change, *why* the deferral was made, my **recommendation** (fix now vs remain deferred) given the user's stated bias toward not deferring, and the trigger condition for revisiting if it stays deferred.
+
+## Recommendation rubric
+
+The user's stated bias is to NOT defer. So:
+
+- **Fix now** = my default unless I have a strong defer argument.
+- **Remain deferred** = I have a *strong* position that the defer is correct (not just inertia). Each "remain deferred" carries a 2-3 sentence justification.
+
+Use the recommendation summary at the bottom for a quick read; the per-item detail in the body has the reasoning.
+
+## Scope and audience
+
+**Audience:** future sessions picking up this branch; reviewers asking "what didn't we do?"; the next sprint's planner deciding where to start.
+
+**In scope for this doc:**
+
+- Items the v8 port left undone on purpose.
+- Items downgraded or rescheduled during the port.
+- Items the post-port ergonomic pass should consider.
+
+**Out of scope for this doc:**
+
+- Anything that was done (read `dev-notes/2026-05-17-v8-port-journal.md` for the chronological audit trail; `git log --oneline main..HEAD` for the commit-level record).
+- Future net-new features that weren't even considered during the port (those belong in a roadmap doc, not a deferred-items doc).
+
+## Source documents (cross-references)
+
+| Source                                                         | Coverage                                          |
+| -------------------------------------------------------------- | ------------------------------------------------- |
+| `dev-notes/2026-05-17-v8-analysis.md` § Items worth discussing | Items A, B, D, F (review-of-review findings)      |
+| `dev-notes/2026-05-17-v8-analysis.md` § Resolutions            | Author resolutions (e.g., `_decision_timeout_ms`) |
+| `dev-notes/2026-05-17-v8-port-plan.md` § Out of scope          | Architectural out-of-scope items                  |
+| `dev-notes/2026-05-17-v8-port-review-synthesis.md` § Tier 2    | Gate A.5 findings F8-F36 (22 items)               |
+| `dev-notes/2026-05-17-v8-port-journal.md`                      | Phase 6 Item-E deferral; F20 fold-in note; etc.   |
+| `dev-notes/SESSION-STATE.md` § Pending tasks                   | Post-port pointer for the next session            |
+
+## Categories
+
+| Letter | Category                          | Count | Where they came from                        |
+| ------ | --------------------------------- | ----- | ------------------------------------------- |
+| A      | Author-resolution deferrals       | 6     | Analysis § Resolutions (2026-05-17)         |
+| B      | Gate A.5 Tier-2 review findings   | 22    | Synthesis doc § Tier 2 (F8-F36)             |
+| C      | In-flight deferrals (during port) | 2     | Phase 6 (Item E); Phase 5.5 sibling fold-in |
+| D      | Architectural out-of-scope        | 5     | Port plan § Out of scope                    |
+| E      | Longstanding backlog (pre-port)   | 2     | SESSION-STATE (carried over)                |
+| F      | Future roadmap                    | 3     | DESIGN.md § Roadmap                         |
+
+Total: ~40 entries with significant overlap between categories (Item B = F27 = D.4; Item A = F26 = D.5; Item D = F10). The detail sections below de-duplicate.
+
+## A. Author-resolution deferrals
+
+Decisions the author made during the design-review phase that say "yes, this is a real concern, but we're not addressing it in v1 of the port."
+
+### A.1: Item A — decision-hook exception is logged twice
+
+**Source:** analysis § Items worth discussing A. **Synthesis Tier-2:** F26.
+
+**What:** decision hook raises → logged once via `_LOG.exception` in `_dispatch_decision_hook`; the exception re-raises into `_async_on_bridge_event`; `server.py`'s `_dispatch_bridge_event` catches and logs again before returning the failure response to the shim.
+
+**Why deferred:** cosmetic. The fail-open behavior is correct (pi proceeds as if no decision was made); the duplicate log is mildly noisy but useful for debugging in different layers. No silent-failure or correctness concern.
+
+**Recommendation: Fix now.** Cheap (set a sentinel attribute on the exception object on the inner catch; outer catch checks it before logging). ~5 LOC + 1 test. The author resolution was "defer to ergonomic pass" not "don't fix" — given bias-not-to-defer, this is small enough to fold into a Tier-2 cleanup commit.
+
+### A.2: Item B — shim-side `DECISION_EVENTS` array not validated against pi source
+
+**Source:** analysis § Items worth discussing B. **Synthesis Tier-2:** F27.
+
+**What:** `src/libharness/pi/shim.py` hardcodes 19 decision event names in a TypeScript array. The Python-side `test_pi_event_taxonomy.py` parses pi-mono source and asserts the Python frozenset matches, but the TS array gets no such check.
+
+**Why deferred:** drift is detectable at the Python layer (taxonomy test catches it); the TS-side check is a hardening pass. A new pi event wouldn't cause silent corruption — it would simply not fire any hook.
+
+**Recommendation: Fix now.** The fix is to generate the TS array from `_DECISION_EVENT_NAMES` at shim-write time. ~10-20 LOC in `write_bridge_shim`. Eliminates a real drift vector with one source of truth; future me will thank current me when pi adds a new event and the regen is one place instead of two.
+
+### A.3: Item D — `_handler_wants_context` heuristic edge cases
+
+**Source:** analysis § Items worth discussing D. **Synthesis Tier-2:** F10.
+
+**What:** the dispatcher inspects the hook signature to decide whether to pass `ctx`. The canonical signatures (`(self, event)` or `(self, event, ctx)`) work. Edge case: `def decide_X(self, *, ctx)` triggers the heuristic but then `_call_decision_handler` invokes positionally → `TypeError: handler() takes 2 positional arguments but 3 were given`.
+
+**Why deferred:** the edge case errors loudly (not silently) and the fix on the user side is a one-line signature change.
+
+**Recommendation: Fix now.** Pass via kwargs when the heuristic detects a keyword-only `ctx`: `handler(event, ctx=ctx)` rather than `handler(event, ctx)`. ~3 LOC change + 1 parametrized test. Eliminates a real footgun for the user pattern that the heuristic accepts.
+
+### A.4: Item F — wire frame field names diverged from prompt sketch
+
+**Source:** analysis § Items worth discussing F.
+
+**What:** v8 uses `{"event": "...", "data": {...}}` for bridge frames. The analysis prompt sketched `{"event_name": "...", "event_data": {...}}`.
+
+**Why deferred:** purely cosmetic. Pi never sees these frames — they're internal Python ↔ TS bridge envelopes. The names are consistent on both sides of the bridge.
+
+**Recommendation: Remain deferred.** This is genuinely cosmetic — the names work, are consistent across both sides, and renaming would churn the protocol with zero gain. There's no audience that benefits from `event_name` over `event`: pi doesn't see them, users never write them, the docs match the implementation. The original analysis-prompt convention was a draft, not a requirement. Defer is correct; revisit only if a different audience materializes (e.g., third-party shim authors who'd find verbose names easier to skim).
+
+### A.5: Default `_decision_timeout_ms = 30000` rejected (HITL case)
+
+**Source:** analysis § Resolutions (recommendations doc proposed 30s; rejected). **Port plan:** § Out of scope.
+
+**What:** the recommendations doc proposed defaulting `_decision_timeout_ms` to 30s "so a buggy `decide_X` can't wedge pi indefinitely." Rejected: the default stays `None` (no timeout).
+
+**Why deferred:** human-in-the-loop decision hooks may legitimately need to block for hours or days. Assuming non-HITL by default would bake in a wrong assumption.
+
+**Recommendation: Remain deferred (= remain rejected).** This is the user's own explicit resolution from 2026-05-17 and it's load-bearing: the library's HITL use case is a primary design driver. Setting a default would either (a) constrain HITL users to bypass it (back to None) or (b) silently kill long-running HITL hooks. The cost of defaulting is high (wrong-by-default for the load-bearing use case) and the protection is opt-out trivially. Strong position: don't touch the default.
+
+### A.6: Runtime opt-in for decision events
+
+**Source:** analysis § Resolutions (deferred). **Port plan:** § Out of scope.
+
+**What:** `agent.enable_decision_for(...)` / `agent.disable_decision_for(...)` to flip gates after extension load. Currently, the gate set is fixed at extension load; method existence is the opt-in trigger.
+
+**Why deferred:** the method-existence trigger covers the canonical use case. Runtime opt-in adds per-Agent gate state, bridge round-trip for flips, and a race window during transition.
+
+**Recommendation: Remain deferred.** The method-existence trigger is *sufficient* for every known use case. Adding runtime opt-in costs: new bridge call types, gate-state synchronization between Python and TS, a race window during gate transitions, and the complexity of "what happens to in-flight events when the gate flips mid-fire?" That's substantial engineering with zero current motivating case. Strong position: do nothing until a real use case emerges (e.g., "decision hook should be active only during the first N turns" or similar). The canonical workaround — define a separate `Agent` subclass per gate set — works.
+
+## B. Gate A.5 Tier-2 review findings
+
+This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` § Tier 2 with reviewer agreement counts and full per-item context. The table below is the rollup with **my recommendation** added; the **Detail** list below the table justifies the few "Remain deferred" calls.
+
+| ID  | Sev  | Title                                                                  | Rec   |
+| --- | ---- | ---------------------------------------------------------------------- | ----- |
+| F8  | HIGH | Shared `hook_executor` max_workers=1 serializes HITL across harnesses  | Fix   |
+| F9  | HIGH | `_call`/`submit` race with `close()` — queued commands hang            | Fix   |
+| F10 | MOD  | Keyword-only `ctx` dispatched positionally (= Item D)                  | Fix   |
+| F11 | MOD  | `_decision_timeouts_ms` mutable class-default footgun                  | Fix   |
+| F12 | MOD  | `Agent.__init__` silently overwrites three user-provided kwargs        | Fix   |
+| F13 | MOD  | `watch_disconnect` sets `cancelled` in finally on normal completion    | Fix   |
+| F14 | MOD  | Reader-task death doesn't terminate pi subprocess                      | Fix   |
+| F15 | MOD  | `close()` hangs if reader awaits handler that swallows CancelledError  | Fix   |
+| F16 | MOD  | `ProcessLookupError` during SIGTERM aborts `close()` cleanup           | Fix   |
+| F17 | MOD  | `Agent` not exercised in the 13-test suite                             | Done  |
+| F19 | MIN  | `_decision_timeouts_for_manifest` advertises timeouts for closed gates | Fix   |
+| F20 | MIN  | `context or {}` falsy coercion                                         | Done  |
+| F21 | MIN  | `AgentHookSurface` subclasses can bypass validation                    | Defer |
+| F22 | MIN  | Sync notification hooks returning awaitables: silently dropped         | Fix   |
+| F23 | MIN  | Timeout validator accepts non-int values (`True`, `0.5`)               | Fix   |
+| F24 | MIN  | Failed `start()` leaves `self.process` set, blocking retry             | Fix   |
+| F25 | MIN  | Constructor-passed `decision_timeouts_ms` skips validation             | Fix   |
+| F26 | MIN  | Decision-hook exception logged twice (= Item A)                        | Fix   |
+| F27 | MIN  | Shim-side `_DECISION_EVENT_NAMES` drift (= Item B)                     | Fix   |
+| F28 | MIN  | `cast(object, Agent)` workaround needs comment                         | Fix   |
+| F29 | MIN  | `PiLaunchConfig.startup_timeout` misnamed (sleeps ≤0.2s)               | Fix   |
+| F30 | MIN  | Test asserts state but not order of cleanup                            | Defer |
+| F31 | MIN  | Consistency-check helper only runs on the base                         | Defer |
+| F32 | MIN  | `_check_owner` error message missing harness_id                        | Fix   |
+| F33 | MIN  | `next_event()`/`wait_for_event()` waiters never unblocked on `close()` | Fix   |
+| F34 | MIN  | Caller-supplied duplicate request IDs can overwrite `_pending`         | Fix   |
+| F35 | MIN  | Tool params named `context`/`ctx` get silently hijacked                | Fix   |
+| F36 | MIN  | Same key-precedence footgun in `shim.py`'s `bridgeCall`/`bridgeNotify` | Fix   |
+
+**Detail (Tier-2 items I recommend keeping deferred):**
+
+- *F17 — Done.* The synthesis doc was written against the pre-Phase-6 state (13 tests). After Phase 6, `tests/pi/test_agent_class.py` has 16 tests against Agent (including 3 strict-mode E2E tests for decision events from Item C), and `test_decision_hooks.py` / `test_channel_separation.py` exercise the surface further. The 56-test suite resolves the bulk of this finding. Any remaining gaps are absorbed by the future tests for the other fixes.
+- *F20 — Done.* Already folded into commit `4d0bee1` (Tier-1 fixes) per the synthesizer's note. Listed in the table for completeness; no action needed.
+- *F21 — Remain deferred.* Subclassing `AgentHookSurface` directly (without going through `Agent`) is not a documented or supported user pattern. Adding the `__init_subclass__` validation to `AgentHookSurface` changes the invariant about who validates whose surface and could surprise the (currently zero) users who subclass the mixin to compose differently. Defer until a real use case materializes.
+- *F30 — Remain deferred.* The existing cherry-pick test asserts the post-cleanup state (task slots null, process reaped). Strengthening it to assert the *order* of cleanup operations would require instrumenting the helper with a counter or monkeypatching the asyncio.gather call. The test surface lives in the right spirit; adding fragility for theoretical order-bug protection isn't worth it. Defer until someone actually changes the cleanup order and breaks the spirit.
+- *F31 — Remain deferred.* The consistency-check helper guards the *library's* declarative surface. Running it on every user subclass adds runtime cost on every Agent subclass instantiation. User subclasses that drift from the library surface fail validation differently (the existing `_validate_declared_hook_names` covers user-side typos in hook names). Library-side drift is what matters; library-side drift is what the helper catches. Defer indefinitely.
+
+All other Tier-2 items are recommended Fix-now. Quick aggregation of fix-effort estimates:
+
+- Trivial (≤5 LOC, 1 test): F11, F19, F24, F28, F32, F34, F36 (7 items).
+- Small (5-20 LOC, 1-2 tests): F10, F12, F13, F15, F16, F22, F23, F25, F26, F29, F33, F35 (12 items).
+- Medium (design call + 20-50 LOC): F8, F9, F14, F27 (4 items).
+
+Total fix-now Tier-2 effort: ~25 items × small-to-medium = a focused ergonomic-pass commit of ~300-500 LOC plus regression tests. Doable in one focused sprint session.
+
+## C. In-flight deferrals (during port)
+
+### C.1: Item E — `subscribe_client_events` thread-bounce simplification
+
+**Source:** analysis § Items worth discussing E (planned for port). **Journal:** Phase 6 entry ("Item E deferred").
+
+**What:** the install path is owner-thread → loop-thread → `list.append`. The simplification is to schedule directly on the loop thread, skipping the owner-thread bounce.
+
+**Why deferred during Phase 6:** the advisor doc rated it "low-risk in isolation; low value too." Without deeper analysis of the loop/owner ownership model for the handler list, the safe call was to defer.
+
+**Recommendation: Remain deferred.** The benefit is *one fewer thread hop* during `agent.start()`/`agent.close()` — once per lifetime, not a hot path. The risk is non-zero: the install/uninstall path has implicit ordering with the owner thread, and bypassing it could race with other commands that *are* owner-thread-ordered. Cost is small (a few lines); value is smaller still. This is the textbook case where defer is correct: a "cleanup" with no measurable benefit and a non-zero invariant risk. Defer to the F8-driven threading-model audit; if that audit reshapes the runtime-level ownership, this becomes free; if it doesn't, leave it alone.
+
+### C.2: F20 — addressed already
+
+Folded into the Gate A.5 Tier-1 fix commit per synthesizer's note. Listed here for the audit trail; not an open deferral.
+
+## D. Architectural out-of-scope (from the port plan)
+
+### D.1: Per-event TypedDicts for decision-hook return shapes
+
+**Source:** port plan § Out of scope.
+
+**What:** instead of returning a raw `dict`, decision hooks would return a `TypedDict` per event.
+
+**Why deferred:** 19 new public TypedDict classes; per-event return-shape documentation already covers user needs; pi-mono shape changes would require regen.
+
+**Recommendation: Remain deferred.** This is a *future-feature deferral*, not a port-time skip. The doc contract works; users get autocomplete on event payloads via the existing `AgentEvent` mapping protocol. TypedDicts add real maintenance cost — every time pi-mono changes a shape, every TypedDict needs to track it. The library would become a bigger surface for marginal compile-time benefit. Strong position: defer until a user surfaces a shape mismatch that compile-time checks would have caught. Until then, runtime + doc is the right contract.
+
+### D.2: Pi-native session method wrappers
+
+**Source:** port plan § Out of scope. **SESSION-STATE:** Pending tasks.
+
+**What:** `fork`, `clone`, `switch_session`, `get_session_stats`, `export_html`, `set_session_name`, `get_fork_messages` as typed methods on `PiRpcClient`. ~100-150 LOC.
+
+**Why deferred:** independent of v8 port; predates it.
+
+**Recommendation: Fix now.** A defined task with no open design questions, ~100-150 LOC, no v8 dependency. Closing it now rather than carrying it forward is the right call given bias-not-to-defer. Land as a separate commit (not bundled with v8 work) since it's an orthogonal feature, but in the same sprint.
+
+### D.3: `PiPythonHarness` deprecation
+
+**Source:** port plan § Out of scope (per author resolution #3).
+
+**What:** add a `DeprecationWarning` to `PiPythonHarness.__init__` and eventually remove.
+
+**Why deferred:** author resolution #3 keeps it for v1 of the port.
+
+**Recommendation: Remain deferred.** Author resolution #3 is explicit. Adding a `DeprecationWarning` now would partially-violate the resolution ("keep for v1" implies "don't actively migrate users yet"). The right time to deprecate is after the v8 surface has been used in real codebases for long enough that the migration path is well-understood — which is precisely what "v1 of the port" means. Strong position: respect the resolution; revisit after one or two production deployments report back.
+
+### D.4: Shim-side `DECISION_EVENTS` drift detection (= A.2 / F27)
+
+Covered in A.2. Recommendation: Fix now.
+
+### D.5: Decision hook exception logging dedup (= A.1 / F26)
+
+Covered in A.1. Recommendation: Fix now.
+
+## E. Longstanding backlog (pre-port)
+
+### E.1: Generator-through-bridge regression test
+
+**Source:** SESSION-STATE (carried from earlier sessions).
+
+**What:** sync-generator handlers yielding multiple `update` frames are supported in `tools.py:collect_tool_result` but never end-to-end tested through the bridge.
+
+**Why deferred:** the test gap is real but v8 preserves the path; the gap survived the v8 port.
+
+**Recommendation: Fix now.** A real test gap that would catch a real regression. Effort: ~30-50 LOC (a fake-pi script that runs a sync-generator handler + assertions on the wire shape of intermediate updates). Bias-not-to-defer plus the closing-a-known-gap value makes this an easy yes.
+
+### E.2: Generator-through-bridge feature
+
+The *feature* is supported; only the *test* is missing. Not a real deferral. Folded into E.1.
+
+## F. Future roadmap (post-port)
+
+### F.1: Command bridge
+
+**Source:** DESIGN.md § Roadmap.
+
+**What:** let Python register pi slash commands (`/something`) the same way TypeScript extensions can.
+
+**Why deferred:** no user case yet; v8 focused on the event/decision bridge.
+
+**Recommendation: Remain deferred.** This is a forward-looking feature, not a port-related deferral. There's no user case yet, no concrete protocol, no design doc. Building it now would be hypothetical engineering. Defer per the standard rule: build when a real user case lights up the need. The bridge protocol supports it; the runway is there.
+
+### F.2: State bridge
+
+**Source:** DESIGN.md § Roadmap.
+
+**What:** let Python query and mutate session state mid-run.
+
+**Why deferred:** mutation timing is the hard part; needs design work.
+
+**Recommendation: Remain deferred.** Same reasoning as F.1. Forward-looking; no user case; mutation-timing design needs a real motivating scenario to be sized correctly. Premature design without a use case tends to produce the wrong abstraction.
+
+### F.3: UI bridge
+
+**Source:** DESIGN.md § Roadmap.
+
+**What:** richer UI bridge for `select`/`input`/`confirm`/`editor` dialogs.
+
+**Why deferred:** the headless auto-handler covers the test-environment use case; interactive UI requires a host-side implementation.
+
+**Recommendation: Remain deferred.** Same family as F.1/F.2. The headless implementation works for the only current consumer (tests); interactive UI requires a host UI to render *through*, which doesn't exist yet. Build when a host UI demands it.
+
+## Recommendations summary
+
+| Recommendation                        | Count |
+| ------------------------------------- | ----- |
+| **Fix now** — ergonomic-pass sprint   | 26    |
+| **Remain deferred** — strong position | 10    |
+| **Already done**                      | 2     |
+
+**Detail (which items go in each bucket):**
+
+- *Fix now (26):* A.1, A.2, A.3 (= F10 = Item D), F8, F9, F11, F12, F13, F14, F15, F16, F19, F22, F23, F24, F25, F26 (= A.1), F27 (= A.2), F28, F29, F32, F33, F34, F35, F36, D.2 (session wrappers), E.1 (generator-through-bridge test). Note: F10 / F26 / F27 are listed alongside their Author-resolution doubles (A.3 / A.1 / A.2) — same fix, different originating doc.
+- *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
+- *Already done (2):* F17 (Agent test coverage — addressed by Phase 6's test port), F20 (folded into commit `4d0bee1`).
+
+26 fix-now items + the carrying of A.5 (HITL no-default-timeout, already resolved) and A.4 (cosmetic wire-frame names). The fix-now set clusters cleanly into:
+
+- **Threading-model audit** (F8, F9, F13, F14, F15, F16, C.1 if folded in): 1 design-call commit + ~6 cleanup commits.
+- **Validation tightening** (A.3 / F10, F11, F12, F22, F23, F25): 1 commit, ~50 LOC + parametrized tests.
+- **Diagnostics / docs / cosmetic** (A.1 / F26, F28, F29, F32, F35): 1 commit, ~30 LOC.
+- **Bug fixes** (F19, F24, F33, F34, A.2 / F27, F36): 1 commit per logical surface (server, rpc, shim), ~50 LOC each.
+- **Independent work** (D.2 session wrappers, E.1 generator test): 1 commit each, ~100-150 LOC.
+
+Total ergonomic-pass effort: roughly 4-6 commits, ~500-700 LOC + tests. Single focused sprint session.
+
+## When to revisit the "Remain deferred" items
+
+| Item                                                | Trigger                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| A.4 (wire-frame names)                              | Never (cosmetic; no audience) unless a documentation case demands consistency       |
+| A.5 (`_decision_timeout_ms` default)                | Never as a default change; possibly add a non-HITL helper class if patterns warrant |
+| A.6 (runtime opt-in for decision events)            | Real use case requiring dynamic gate flipping mid-run                               |
+| F21 (`AgentHookSurface` subclass validation bypass) | User reports surprise from direct mixin subclassing                                 |
+| F30 (test asserts state not order)                  | Someone changes cleanup order and breaks the spirit                                 |
+| F31 (consistency check on subclasses)               | Indefinitely deferred                                                               |
+| C.1 (Item E thread-bounce)                          | Fold into F8/F9 threading-model audit                                               |
+| D.1 (TypedDicts)                                    | User surfaces a shape mismatch that compile-time would have caught                  |
+| D.3 (`PiPythonHarness` deprecation)                 | After 1-2 production deployments report back on the v8 surface                      |
+| F.1/F.2/F.3 (roadmap bridges)                       | First user case for each                                                            |
+
+## Adding new deferred items
+
+When the next sprint or ergonomic pass surfaces something else worth deferring, append a new entry to the relevant category. Pattern:
+
+1. Pick the category.
+1. Title the entry with what would change if implemented.
+1. Cite the source (commit, doc, journal entry).
+1. State the *why* explicitly — vague justifications ("seems risky") don't help future readers.
+1. State the **Recommendation** (Fix now / Remain deferred / Done) with a one-line justification.
+1. State the trigger condition for revisiting if deferred.
+
+Keep this doc as the canonical rollup. If a deferred item later gets done, mark it DONE in place with a pointer to the commit rather than deleting the entry — the audit trail matters.
+
+## Status
+
+**Sprint complete; this doc lives forward.** A future ergonomic-pass session should read this end-to-end before deciding what to tackle. The "Fix now" set is the priority backlog; the "Remain deferred" set carries the justification trail so it isn't relitigated.
