@@ -254,19 +254,34 @@ class PiRpcClient:
             await asyncio.wait_for(proc.wait(), timeout=2.0)
         except TimeoutError:
             try:
-                if sys.platform == "win32":
-                    proc.terminate()
-                else:
-                    proc.send_signal(signal.SIGTERM)
+                # F16: pi may have exited between the initial wait_for
+                # timeout and the SIGTERM call. Suppress ProcessLookupError
+                # so we still reach the cleanup paths below (`_fail_pending`
+                # / `self.process = None`) instead of bailing partway.
+                with contextlib.suppress(ProcessLookupError):
+                    if sys.platform == "win32":
+                        proc.terminate()
+                    else:
+                        proc.send_signal(signal.SIGTERM)
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
             except TimeoutError:
-                proc.kill()
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
                 await proc.wait()
 
         for task in (self._reader_task, self._stderr_task):
             if task:
                 task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                # F15: if the reader is stuck inside a handler that swallows
+                # CancelledError, the gather would hang forever and close()
+                # would never return. Bound the wait so a misbehaving
+                # handler can't wedge teardown. The F3 fix in batch 5.5
+                # requires UI/event handlers to re-raise CancelledError, so
+                # in practice this timeout is defense in depth.
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        asyncio.gather(task, return_exceptions=True), timeout=2.0
+                    )
         self._reader_task = None
         self._stderr_task = None
         self._fail_pending(PiRpcProcessError("Pi RPC process closed"))

@@ -128,14 +128,14 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 | ID  | Sev  | Title                                                                  | Rec   |
 | --- | ---- | ---------------------------------------------------------------------- | ----- |
 | F8  | HIGH | Shared `hook_executor` max_workers=1 serializes HITL across harnesses  | Fix   |
-| F9  | HIGH | `_call`/`submit` race with `close()` — queued commands hang            | Fix   |
+| F9  | HIGH | `_call`/`submit` race with `close()` — queued commands hang            | Done  |
 | F10 | MOD  | Keyword-only `ctx` dispatched positionally (= Item D)                  | Done  |
 | F11 | MOD  | `_decision_timeouts_ms` mutable class-default footgun                  | Done  |
 | F12 | MOD  | `Agent.__init__` silently overwrites three user-provided kwargs        | Done  |
-| F13 | MOD  | `watch_disconnect` sets `cancelled` in finally on normal completion    | Fix   |
+| F13 | MOD  | `watch_disconnect` sets `cancelled` in finally on normal completion    | Done  |
 | F14 | MOD  | Reader-task death doesn't terminate pi subprocess                      | Fix   |
-| F15 | MOD  | `close()` hangs if reader awaits handler that swallows CancelledError  | Fix   |
-| F16 | MOD  | `ProcessLookupError` during SIGTERM aborts `close()` cleanup           | Fix   |
+| F15 | MOD  | `close()` hangs if reader awaits handler that swallows CancelledError  | Done  |
+| F16 | MOD  | `ProcessLookupError` during SIGTERM aborts `close()` cleanup           | Done  |
 | F17 | MOD  | `Agent` not exercised in the 13-test suite                             | Done  |
 | F19 | MIN  | `_decision_timeouts_for_manifest` advertises timeouts for closed gates | Done  |
 | F20 | MIN  | `context or {}` falsy coercion                                         | Done  |
@@ -280,15 +280,15 @@ The *feature* is supported; only the *test* is missing. Not a real deferral. Fol
 
 | Recommendation                        | Count |
 | ------------------------------------- | ----- |
-| **Fix now** — ergonomic-pass backlog  | 6     |
+| **Fix now** — need the council        | 2     |
 | **Remain deferred** — strong position | 10    |
-| **Done**                              | 22    |
+| **Done**                              | 26    |
 
 **Detail (which items go in each bucket):**
 
-- *Fix now (6, remaining ergonomic-pass backlog — threading-model audit):* F8, F9, F13, F14, F15, F16.
+- *Fix now (2, need the 4-LLM council for design call):* F8 (shared hook_executor design — per-Agent vs bump-workers), F14 (reader-task death — conservative-fail-pending vs aggressive-kill-pi).
 - *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass — risk now documented in `AgentHookSurface` docstring), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
-- *Done (22):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 (this commit) — A.2 / F27, F19, F24, F33, F34, F36.
+- *Done (26):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 commit `13dd691` — A.2 / F27, F19, F24, F33, F34, F36; batch 4a (this commit) — F9, F13, F15, F16.
 
 26 fix-now items + the carrying of A.5 (HITL no-default-timeout, already resolved) and A.4 (cosmetic wire-frame names). The fix-now set clusters cleanly into:
 

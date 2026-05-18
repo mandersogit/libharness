@@ -235,14 +235,24 @@ class PythonToolServer:
         cancelled = threading.Event()
 
         async def watch_disconnect() -> None:
+            # F13: only set `cancelled` on an actual disconnect (EOF or
+            # reader error). When the parent task cancels us after a normal
+            # handler completion, asyncio.CancelledError propagates here;
+            # setting `cancelled` in `finally` would have flipped the
+            # cancellation flag after-the-fact, breaking the
+            # HookContext.cancelled contract.
             try:
                 while not reader.at_eof():
                     data_chunk = await reader.read(1)
                     if data_chunk == b"":
                         break
+                cancelled.set()  # loop exited via EOF
+            except asyncio.CancelledError:
+                # Parent cancelled us (normal completion path) — DO NOT
+                # flip the disconnect signal.
+                raise
             except Exception:
-                pass
-            finally:
+                # Reader error — best-effort treat as disconnect.
                 cancelled.set()
 
         watcher = asyncio.create_task(watch_disconnect())
@@ -296,14 +306,17 @@ class PythonToolServer:
             await send_update_async(value)
 
         async def watch_disconnect() -> None:
+            # F13: same disconnect semantics as `_dispatch_bridge_event` —
+            # parent-cancellation must not set `cancelled` after-the-fact.
             try:
                 while not reader.at_eof():
                     data = await reader.read(1)
                     if data == b"":
                         break
+                cancelled.set()
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                pass
-            finally:
                 cancelled.set()
 
         watcher = asyncio.create_task(watch_disconnect())

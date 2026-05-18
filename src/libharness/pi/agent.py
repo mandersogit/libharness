@@ -109,6 +109,14 @@ class PiAgentHarness:
         self._owner_thread_name = owner_thread_name
         self._owner_ready: concurrent.futures.Future[None] = concurrent.futures.Future()
         self._owner_start_lock = threading.Lock()
+        # F9: guards the close↔submit race. Without it, submit()'s
+        # `if self._closed` check and the subsequent `_commands.put(command)`
+        # can interleave with close()'s `self._closed = True` +
+        # `_commands.put(_STOP)`, leaving the late command queued behind
+        # _STOP and hanging the caller forever. Holding this lock around
+        # both the check-and-put in submit() and the set-and-put in
+        # close() keeps the operation atomic.
+        self._close_lock = threading.Lock()
         self._core: _PiAgentHarnessCore | None = None
         self._core_kwargs: dict[str, Any] = {
             "harness_id": self.harness_id,
@@ -186,15 +194,19 @@ class PiAgentHarness:
         try:
             self._call(lambda core: core.close())
         finally:
-            self._closed = True
-            if self.threaded:
-                assert self._commands is not None
-                self._commands.put(_STOP)
-                if (
-                    self._owner_thread is not None
-                    and threading.get_ident() != self._owner_thread.ident
-                ):
-                    self._owner_thread.join(timeout=5)
+            # F9: take the close lock so an interleaving submit() can't
+            # land a command between us setting _closed and putting _STOP.
+            with self._close_lock:
+                self._closed = True
+                if self.threaded:
+                    assert self._commands is not None
+                    self._commands.put(_STOP)
+            if (
+                self.threaded
+                and self._owner_thread is not None
+                and threading.get_ident() != self._owner_thread.ident
+            ):
+                self._owner_thread.join(timeout=5)
 
     def snapshot(self) -> HarnessSnapshot:
         return self._call(lambda core: core.snapshot())
@@ -265,15 +277,20 @@ class PiAgentHarness:
         harness while preserving owner-thread affinity.
         """
 
-        if self._closed:
-            raise RuntimeError("PiAgentHarness is closed")
         if not self.threaded:
+            # Fast path — no lock needed because there's no queue to race
+            # against. The closed check is still done here for the same
+            # error message.
+            if self._closed:
+                raise RuntimeError("PiAgentHarness is closed")
             future: concurrent.futures.Future[_T] = concurrent.futures.Future()
             try:
                 future.set_result(self._call(operation))
             except BaseException as exc:
                 future.set_exception(exc)
             return future
+        # F9: ensure start_owner_thread runs before we take the close lock —
+        # start_owner_thread takes its own lock and we don't want to nest.
         self.start_owner_thread()
         future = concurrent.futures.Future()
         assert self._commands is not None
@@ -281,7 +298,14 @@ class PiAgentHarness:
             cast(Callable[["_PiAgentHarnessCore"], Any], operation),
             cast(concurrent.futures.Future[Any], future),
         )
-        self._commands.put(command)
+        # F9: hold _close_lock for the check-and-put so a concurrent close()
+        # can't slip _STOP between the check and the put. Either we put
+        # before close (the command runs normally) or we see _closed=True
+        # and raise — never queued-behind-STOP.
+        with self._close_lock:
+            if self._closed:
+                raise RuntimeError("PiAgentHarness is closed")
+            self._commands.put(command)
         return future
 
     def __enter__(self) -> PiAgentHarness:
