@@ -16,10 +16,18 @@ state from the surface they validate. They run from ``Agent``'s
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from types import MappingProxyType
 from typing import ClassVar
 
 from .events import AgentEvent
+
+# F11: an empty MappingProxyType for the `_decision_timeouts_ms` default.
+# Using a bare `{}` would share one mutable dict across every subclass that
+# didn't reassign — a classic Python footgun: `MySub._decision_timeouts_ms["x"] = 5`
+# would mutate the base class default, affecting every other subclass. The proxy
+# raises TypeError on mutation; users must reassign (`MySub._decision_timeouts_ms = {...}`).
+_EMPTY_TIMEOUTS: Mapping[str, int] = MappingProxyType({})
 
 AsyncAgentHook = Callable[[AgentEvent], Awaitable[object]]
 SyncAgentHook = Callable[[AgentEvent], object]
@@ -102,7 +110,10 @@ class AgentHookSurface:
 
     _raise_on_unhandled_event: ClassVar[bool] = False
     _decision_timeout_ms: ClassVar[int | None] = None
-    _decision_timeouts_ms: ClassVar[dict[str, int]] = {}
+    # Read-only at the base class to prevent the mutable-class-default footgun
+    # (F11). Subclasses set their own timeouts by reassigning the attribute,
+    # e.g. `_decision_timeouts_ms = {"tool_call": 5000}`.
+    _decision_timeouts_ms: ClassVar[Mapping[str, int]] = _EMPTY_TIMEOUTS
 
     # Sync notification hooks (37: 18 RPC notification + 19 decision-event observation slots)
     on_agent_start: ClassVar[SyncAgentHook | None] = None
@@ -286,18 +297,57 @@ class AgentHookSurface:
 
     @classmethod
     def _validate_decision_timeouts(cls) -> None:
-        if cls._decision_timeout_ms is not None and cls._decision_timeout_ms <= 0:
-            raise TypeError(f"{cls.__name__}._decision_timeout_ms must be positive or None")
+        if cls._decision_timeout_ms is not None and not _is_positive_int(cls._decision_timeout_ms):
+            raise TypeError(
+                f"{cls.__name__}._decision_timeout_ms must be a positive int or None, "
+                f"got {cls._decision_timeout_ms!r}"
+            )
         for event_name, timeout_ms in cls._decision_timeouts_ms.items():
             if event_name not in cls._DECISION_EVENT_NAMES:
                 raise TypeError(
                     f"{cls.__name__}._decision_timeouts_ms uses unsupported decision event "
                     f"{event_name!r}; expected one of {sorted(cls._DECISION_EVENT_NAMES)!r}"
                 )
-            if timeout_ms <= 0:
+            if not _is_positive_int(timeout_ms):
                 raise TypeError(
-                    f"{cls.__name__}._decision_timeouts_ms[{event_name!r}] must be positive"
+                    f"{cls.__name__}._decision_timeouts_ms[{event_name!r}] must be a positive "
+                    f"int, got {timeout_ms!r}"
                 )
+
+
+def _is_positive_int(value: object) -> bool:
+    """F23: bool is an int subclass and `0.5 > 0` is True; the original
+    `value > 0` check accepted both. This strict check rejects them.
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def validate_decision_timeouts_mapping(
+    timeouts: Mapping[str, int],
+    *,
+    decision_event_names: frozenset[str] | None = None,
+    context: str = "decision_timeouts_ms",
+) -> None:
+    """F25: validate a constructor-supplied timeouts mapping outside the
+    classmethod path. Used by `PiAgentHarness.__init__` when a caller passes
+    `decision_timeouts_ms=` directly (bypassing the Agent-derived classmethod).
+
+    If `decision_event_names` is provided, also checks the key is a known event.
+    """
+    for event_name, timeout_ms in timeouts.items():
+        if not isinstance(event_name, str):
+            raise TypeError(
+                f"{context} key {event_name!r} must be a str, got {type(event_name).__name__}"
+            )
+        if decision_event_names is not None and event_name not in decision_event_names:
+            raise TypeError(
+                f"{context} uses unsupported decision event {event_name!r}; "
+                f"expected one of {sorted(decision_event_names)!r}"
+            )
+        if not _is_positive_int(timeout_ms):
+            raise TypeError(
+                f"{context}[{event_name!r}] must be a positive int, got {timeout_ms!r}"
+            )
 
 
 def _assert_declarations_match_event_sets(cls: type[AgentHookSurface]) -> None:

@@ -22,7 +22,7 @@ import inspect
 import logging
 import threading
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from .agent import PiAgentHarness
 from .events import AgentEvent, HookContext, UnhandledEventError
@@ -53,7 +53,26 @@ class Agent(AgentHookSurface, PiAgentHarness):
         cls._validate_effective_hook_collisions()
         cls._validate_decision_timeouts()
 
+    _AGENT_OWNED_KWARGS: ClassVar[frozenset[str]] = frozenset(
+        {"bridge_event_handler", "initial_open_gates", "decision_timeouts_ms"}
+    )
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # F12: Agent owns these three kwargs — they're computed from the
+        # subclass's hook surface. Silently overwriting a user-supplied value
+        # would be a footgun; raise instead. To configure decision-timeout
+        # behavior, set `_decision_timeout_ms` / `_decision_timeouts_ms`
+        # ClassVars on the subclass. To install a bridge_event_handler
+        # directly, use `PiAgentHarness` (the unsubclassed base) instead of
+        # `Agent`.
+        owned_overlap = self._AGENT_OWNED_KWARGS & kwargs.keys()
+        if owned_overlap:
+            raise TypeError(
+                f"Agent owns these constructor kwargs and computes them from the "
+                f"hook surface: {sorted(owned_overlap)!r}. "
+                f"Remove them from the call site, or use `PiAgentHarness` directly "
+                f"if you need to set them manually."
+            )
         self._agent_event_unsubscribe: Callable[[], None] | None = None
         kwargs["bridge_event_handler"] = self._async_on_bridge_event
         kwargs["initial_open_gates"] = tuple(self._initial_open_gates_for_class())
@@ -121,7 +140,18 @@ class Agent(AgentHookSurface, PiAgentHarness):
         if sync_handler is not None:
             loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(self.runtime.hook_executor, sync_handler, event)
+                # F22: `run_in_executor` returns the sync handler's return
+                # value. If the handler returned a coroutine (i.e., is
+                # accidentally `async def` instead of `def`), discarding it
+                # would mean the hook silently never runs. Raise instead.
+                result = await loop.run_in_executor(
+                    self.runtime.hook_executor, sync_handler, event
+                )
+                if inspect.isawaitable(result):
+                    raise TypeError(
+                        f"on_{name} returned an awaitable; sync notification hooks "
+                        f"must not. Use async_on_{name} instead."
+                    )
             except Exception:
                 _LOG.exception("Agent notification hook failed for event %s", name)
             return
@@ -211,28 +241,51 @@ def _call_decision_handler(
     event: AgentEvent,
     ctx: HookContext,
 ) -> object | Awaitable[object | None] | None:
-    if _handler_wants_context(handler):
-        return handler(event, ctx)
-    return handler(event)
+    wants, kw_name = _handler_ctx_mode(handler)
+    if not wants:
+        return handler(event)
+    # A.3 / F10: if the heuristic detected ctx as a KEYWORD_ONLY parameter,
+    # pass it by name. Passing positionally produces the misleading
+    # `TypeError: handler() takes 2 positional arguments but 3 were given`.
+    if kw_name is not None:
+        return handler(event, **{kw_name: ctx})
+    return handler(event, ctx)
 
 
 def _handler_wants_context(handler: Callable[..., object]) -> bool:
+    """Legacy detector kept for backwards-compatible callers; prefer `_handler_ctx_mode`."""
+    return _handler_ctx_mode(handler)[0]
+
+
+def _handler_ctx_mode(handler: Callable[..., object]) -> tuple[bool, str | None]:
+    """Inspect *handler* and decide if/how to pass `ctx`.
+
+    Returns ``(wants_context, kw_name)``:
+
+    - ``wants_context`` is True when the handler signature accepts the
+      cancellation context as a second positional, via ``*args``, or as a
+      keyword-only ``ctx``/``context`` parameter.
+    - ``kw_name`` is non-None when the handler accepts ctx as a keyword-only
+      parameter; the dispatcher passes ctx via that keyword. Pre-fix this was
+      detected but then passed positionally, raising ``TypeError`` for any
+      user who wrote ``def decide_X(self, event, *, ctx)``.
+    """
     try:
         signature = inspect.signature(handler)
     except (TypeError, ValueError):
-        return True
+        return True, None
     positional_count = 0
     for param in signature.parameters.values():
         if param.kind is inspect.Parameter.VAR_POSITIONAL:
-            return True
+            return True, None
         if param.kind in {
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         }:
             positional_count += 1
         if param.kind is inspect.Parameter.KEYWORD_ONLY and param.name in {"ctx", "context"}:
-            return True
-    return positional_count >= 2
+            return True, param.name
+    return positional_count >= 2, None
 
 
 # Keep pyright from narrowing the class attributes to their base-class literal values only.

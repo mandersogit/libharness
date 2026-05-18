@@ -1,0 +1,114 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): ergonomic-pass batch 2 — validation tightening
+
+      Second batch of post-Gate-C "fix now" items. Six related fixes
+      around how the library validates user-facing surface (constructor
+      kwargs, hook signatures, timeout types, mutable class defaults).
+
+      ## Fixes
+
+      **A.3 / F10 — Keyword-only `ctx` parameter passed by keyword, not
+      positional.** Refactored `_handler_wants_context` into
+      `_handler_ctx_mode` that returns `(wants_context, kw_name)`. When
+      the heuristic detects a keyword-only `ctx`/`context` parameter, the
+      dispatcher now invokes `handler(event, **{kw_name: ctx})` instead
+      of passing positionally. Pre-fix: a user who wrote
+      `def decide_X(self, event, *, ctx)` got `TypeError: handler() takes
+      2 positional arguments but 3 were given` from inside the
+      dispatcher. Post-fix: works.
+
+      **F11 — `_decision_timeouts_ms` default is `MappingProxyType({})`.**
+      Pre-fix: shared mutable `dict[str, int] = {}` class default. A user
+      who did `MySubclass._decision_timeouts_ms["tool_call"] = 5000` would
+      mutate the base class dict and silently affect every sibling
+      subclass. Post-fix: mutation raises TypeError; subclasses must
+      reassign (`_decision_timeouts_ms = {"tool_call": 5000}`). The
+      ClassVar annotation moves from `dict[str, int]` to
+      `Mapping[str, int]` accordingly.
+
+      **F12 — `Agent.__init__` raises on owned-kwarg overlap.** The
+      three constructor kwargs `bridge_event_handler`,
+      `initial_open_gates`, `decision_timeouts_ms` are computed from the
+      Agent subclass's hook surface. Pre-fix: silently overwritten if
+      the caller passed them. Post-fix: TypeError naming the offending
+      kwargs and pointing the user at the ClassVar / `PiAgentHarness`
+      alternatives. The owned-kwarg set lives as a class-level frozenset
+      `_AGENT_OWNED_KWARGS` for easy future extension.
+
+      **F22 — Sync notification hook returning an awaitable is rejected.**
+      Pre-fix: `run_in_executor(executor, sync_handler, event)` returned
+      the handler's return value; if the handler was accidentally an
+      `async def` it returned a coroutine that got discarded unawaited
+      (silent hook never ran). Post-fix: the dispatcher checks
+      `inspect.isawaitable(result)` after the executor call and raises
+      TypeError; the surrounding `except Exception` logs it via the
+      established hook-failure path. The decision-hook sync branch
+      already had this check inline (`call()` raises if the result is
+      awaitable); this commit brings the notification branch into parity.
+
+      **F23 — Strict-int timeout validation.** Extracted
+      `_is_positive_int(value)` helper that requires
+      `isinstance(value, int) and not isinstance(value, bool) and
+      value > 0`. Used by both `_validate_decision_timeouts`
+      (subclass-side) and the new
+      `validate_decision_timeouts_mapping(...)` module helper
+      (constructor-side). Pre-fix: `True` (which `== 1`) and `0.5`
+      (which is `> 0`) passed silently. Error messages now include the
+      actual offending value.
+
+      **F25 — Constructor-passed `decision_timeouts_ms` validated.**
+      `PiAgentHarness.__init__` now calls
+      `validate_decision_timeouts_mapping(decision_timeouts_ms)` before
+      storing. Catches malformed dicts at construction time rather than
+      manifest-serialization time. Doesn't enforce the
+      `_DECISION_EVENT_NAMES` membership check (that's hook-layer
+      concern; PiAgentHarness without Agent has no decide-X hooks
+      anyway), but does enforce string keys and positive-int values.
+
+      ## Tests
+
+      `tests/pi/test_ergonomic_pass_cluster2.py` (new, 22 cases):
+
+      - `test_handler_ctx_mode_detects_keyword_only_ctx` — heuristic
+        returns the keyword name.
+      - `test_call_decision_handler_passes_keyword_only_ctx_by_keyword` —
+        end-to-end exercise of the fix.
+      - `test_base_decision_timeouts_ms_is_immutable` — mutation raises.
+      - `test_subclass_can_reassign_decision_timeouts_ms` — reassignment
+        is the canonical path.
+      - `test_agent_init_rejects_owned_kwargs` (parametrized ×3) —
+        each owned kwarg raises.
+      - `test_sync_notification_hook_returning_awaitable_logged` — the
+        coroutine isn't awaited; the dispatcher logs the TypeError.
+      - `test_is_positive_int_strict` (parametrized ×9) — bool / float /
+        string / negative / zero all rejected; positive ints pass.
+      - `test_decision_timeouts_validator_rejects_bool` and
+        `test_decision_timeouts_validator_rejects_float` — subclass
+        validation path rejects.
+      - `test_pi_agent_harness_validates_constructor_decision_timeouts_ms` /
+        `_bool` / `_accepts_valid` — constructor-side validation.
+
+      ## Acceptance
+
+      - 102 tests pass on `local.venv` (3.11) and `local-ft.venv`
+        (3.14t). Up from 80 (= +22 cluster 2 cases).
+      - Ruff / mypy / pyright clean.
+      - The new `_AGENT_OWNED_KWARGS` ClassVar requires `ClassVar` in
+        `agent_class.py`'s typing imports; added.
+      - The new `validate_decision_timeouts_mapping` module helper in
+        `hook_surface.py` is imported by `agent.py` — net new
+        `agent.py → hook_surface.py` edge in the import graph; no
+        cycle (`agent_class.py → agent.py → hook_surface.py → events.py`).
+
+      Deferred-items doc rolls forward: 12 fix-now remaining, 10
+      remain-deferred, 16 done (was 18 / 10 / 10).
+    files:
+      - src/libharness/pi/agent.py
+      - src/libharness/pi/agent_class.py
+      - src/libharness/pi/hook_surface.py
+      - tests/pi/test_ergonomic_pass_cluster2.py
+      - dev-notes/2026-05-17-v8-port-deferred-items.md
+      - dev-notes/commit-plans/2026-05-17-ergonomic-batch-2.yaml

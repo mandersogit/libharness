@@ -23,6 +23,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from .hook_surface import validate_decision_timeouts_mapping
 from .rpc import PiLaunchConfig, PiRpcClient
 from .runtime import HarnessRuntime, get_default_runtime
 from .server import BridgeEndpoint, PythonToolServer
@@ -89,6 +90,13 @@ class PiAgentHarness:
         decision_timeouts_ms: Mapping[str, int] | None = None,
         start_owner_thread: bool = True,
     ) -> None:
+        # F25: validate the constructor-supplied decision_timeouts_ms before
+        # storing it. Agent subclasses skip this path (their __init__ raises
+        # if the kwarg is passed; the classmethod path validates against
+        # _DECISION_EVENT_NAMES). Direct PiAgentHarness callers can pass it,
+        # so check basic types here.
+        if decision_timeouts_ms is not None:
+            validate_decision_timeouts_mapping(decision_timeouts_ms)
         self.harness_id = uuid.uuid4().hex[:12]
         self.registry = registry or ToolRegistry()
         self.config = config or PiLaunchConfig()

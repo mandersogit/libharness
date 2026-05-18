@@ -89,7 +89,7 @@ Decisions the author made during the design-review phase that say "yes, this is 
 
 **Why deferred:** the edge case errors loudly (not silently) and the fix on the user side is a one-line signature change.
 
-**Recommendation: Fix now.** Pass via kwargs when the heuristic detects a keyword-only `ctx`: `handler(event, ctx=ctx)` rather than `handler(event, ctx)`. ~3 LOC change + 1 parametrized test. Eliminates a real footgun for the user pattern that the heuristic accepts.
+**Status: DONE (ergonomic-pass batch 2).** Refactored `_handler_wants_context` into `_handler_ctx_mode` that returns `(wants_context, kw_name)`. The dispatcher now passes ctx via `**{kw_name: ctx}` when the heuristic detects a keyword-only parameter. Regression test in `tests/pi/test_ergonomic_pass_cluster2.py` exercises both the detection and the dispatch.
 
 ### A.4: Item F — wire frame field names diverged from prompt sketch
 
@@ -129,9 +129,9 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 | --- | ---- | ---------------------------------------------------------------------- | ----- |
 | F8  | HIGH | Shared `hook_executor` max_workers=1 serializes HITL across harnesses  | Fix   |
 | F9  | HIGH | `_call`/`submit` race with `close()` — queued commands hang            | Fix   |
-| F10 | MOD  | Keyword-only `ctx` dispatched positionally (= Item D)                  | Fix   |
-| F11 | MOD  | `_decision_timeouts_ms` mutable class-default footgun                  | Fix   |
-| F12 | MOD  | `Agent.__init__` silently overwrites three user-provided kwargs        | Fix   |
+| F10 | MOD  | Keyword-only `ctx` dispatched positionally (= Item D)                  | Done  |
+| F11 | MOD  | `_decision_timeouts_ms` mutable class-default footgun                  | Done  |
+| F12 | MOD  | `Agent.__init__` silently overwrites three user-provided kwargs        | Done  |
 | F13 | MOD  | `watch_disconnect` sets `cancelled` in finally on normal completion    | Fix   |
 | F14 | MOD  | Reader-task death doesn't terminate pi subprocess                      | Fix   |
 | F15 | MOD  | `close()` hangs if reader awaits handler that swallows CancelledError  | Fix   |
@@ -140,10 +140,10 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 | F19 | MIN  | `_decision_timeouts_for_manifest` advertises timeouts for closed gates | Fix   |
 | F20 | MIN  | `context or {}` falsy coercion                                         | Done  |
 | F21 | MIN  | `AgentHookSurface` subclasses can bypass validation                    | Defer |
-| F22 | MIN  | Sync notification hooks returning awaitables: silently dropped         | Fix   |
-| F23 | MIN  | Timeout validator accepts non-int values (`True`, `0.5`)               | Fix   |
+| F22 | MIN  | Sync notification hooks returning awaitables: silently dropped         | Done  |
+| F23 | MIN  | Timeout validator accepts non-int values (`True`, `0.5`)               | Done  |
 | F24 | MIN  | Failed `start()` leaves `self.process` set, blocking retry             | Fix   |
-| F25 | MIN  | Constructor-passed `decision_timeouts_ms` skips validation             | Fix   |
+| F25 | MIN  | Constructor-passed `decision_timeouts_ms` skips validation             | Done  |
 | F26 | MIN  | Decision-hook exception logged twice (= Item A)                        | Done  |
 | F27 | MIN  | Shim-side `_DECISION_EVENT_NAMES` drift (= Item B)                     | Fix   |
 | F28 | MIN  | `cast(object, Agent)` workaround needs comment                         | Done  |
@@ -280,15 +280,15 @@ The *feature* is supported; only the *test* is missing. Not a real deferral. Fol
 
 | Recommendation                        | Count |
 | ------------------------------------- | ----- |
-| **Fix now** — ergonomic-pass backlog  | 18    |
+| **Fix now** — ergonomic-pass backlog  | 12    |
 | **Remain deferred** — strong position | 10    |
-| **Done**                              | 10    |
+| **Done**                              | 16    |
 
 **Detail (which items go in each bucket):**
 
-- *Fix now (18, remaining ergonomic-pass backlog):* A.2 (= F27), A.3 (= F10), F8, F9, F11, F12, F13, F14, F15, F16, F19, F22, F23, F24, F25, F33, F34, F36.
+- *Fix now (12, remaining ergonomic-pass backlog):* A.2 (= F27), F8, F9, F13, F14, F15, F16, F19, F24, F33, F34, F36.
 - *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass — risk now documented in `AgentHookSurface` docstring), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
-- *Done (10):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`), A.1 / F26 (decision-hook exception log dedup), F28 (`cast(object, Agent)` comment), F29 (`startup_timeout` docstring), F32 (`_check_owner` error message), F35 (Tool params reserved-name guard), D.2 (session method wrappers), E.1 (generator-through-bridge test).
+- *Done (16):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 (this commit) — A.3 / F10, F11, F12, F22, F23, F25.
 
 26 fix-now items + the carrying of A.5 (HITL no-default-timeout, already resolved) and A.4 (cosmetic wire-frame names). The fix-now set clusters cleanly into:
 
