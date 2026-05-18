@@ -67,6 +67,12 @@ testpaths = ["tests"]
 # also explicitly ignore the vendored predecessor trees so a stray
 # `pytest dev-notes/...` invocation can't walk into them.
 norecursedirs = ["dev-notes", "links", ".sandbox", "local.venv", "local-ft.venv"]
+# Need the repo root on sys.path so cross-test imports like
+# `from tests.pi.test_threaded_agent import fake_config` (used by
+# test_agent_class / test_channel_separation / test_decision_hooks)
+# resolve under `pytest` directly. `python -m pytest` injects this for
+# free; the `$VENV/bin/pytest` shim used by scripts/test.sh does not.
+pythonpath = ["."]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 markers = [

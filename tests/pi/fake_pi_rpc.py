@@ -15,18 +15,75 @@ for raw in sys.stdin:
     request = json.loads(raw)
     typ = request.get("type")
     if typ == "get_state":
-        send({"type": "extension_ui_request", "id": "ui-1", "method": "confirm", "message": "continue?"})
+        send(
+            {
+                "type": "extension_ui_request",
+                "id": "ui-1",
+                "method": "confirm",
+                "message": "continue?",
+            }
+        )
         response = json.loads(sys.stdin.readline())
-        if response.get("type") != "extension_ui_response" or response.get("confirmed") is not False:
-            send({"type": "response", "id": request.get("id"), "success": False, "error": "bad UI response"})
+        if (
+            response.get("type") != "extension_ui_response"
+            or response.get("confirmed") is not False
+        ):
+            send(
+                {
+                    "type": "response",
+                    "id": request.get("id"),
+                    "success": False,
+                    "error": "bad UI response",
+                }
+            )
         else:
-            send({"type": "response", "id": request.get("id"), "success": True, "data": {"sessionId": "fake", "isStreaming": False}})
+            send(
+                {
+                    "type": "response",
+                    "id": request.get("id"),
+                    "success": True,
+                    "data": {"sessionId": "fake", "isStreaming": False},
+                }
+            )
     elif typ == "prompt":
         send({"type": "response", "id": request.get("id"), "success": True, "data": {}})
         send({"type": "agent_start"})
-        send({"type": "agent_end"})
+        send(
+            {
+                "type": "message_start",
+                "message": {"role": "user", "content": request.get("message")},
+            }
+        )
+        send(
+            {"type": "message_end", "message": {"role": "user", "content": request.get("message")}}
+        )
+        send({"type": "agent_end", "messages": []})
     elif typ == "set_model":
-        # Echo the full request back so tests can assert on the wire shape.
-        send({"type": "response", "id": request.get("id"), "success": True, "data": {"received": request}})
+        if "modelId" not in request or "model" in request:
+            send(
+                {
+                    "type": "response",
+                    "id": request.get("id"),
+                    "success": False,
+                    "error": "expected modelId",
+                }
+            )
+        else:
+            # Echo `received: request` so the v5 test_set_model.py regression
+            # test can assert on the wire shape that arrived. Pi itself returns
+            # a different shape, but the test cares about what the *client*
+            # sent — which means the fake must echo it back.
+            send(
+                {
+                    "type": "response",
+                    "id": request.get("id"),
+                    "success": True,
+                    "data": {
+                        "provider": request.get("provider"),
+                        "id": request.get("modelId"),
+                        "received": request,
+                    },
+                }
+            )
     else:
         send({"type": "response", "id": request.get("id"), "success": True, "data": {}})
