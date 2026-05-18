@@ -105,7 +105,7 @@ A typical session JSONL is a **degenerate tree** — i.e., a linear chain. This 
 1. The header records `parentSession: previousSessionFile` (line 1190).
 1. New entries appended after the fork point go in the new file, parented to the copied-leaf entry.
 
-```
+```text
 Old file:                    New file (after fork from M2):
   header                       header  (parentSession: old)
   M1                           M1      (same id as old)

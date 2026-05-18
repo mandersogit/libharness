@@ -342,3 +342,94 @@ All 7 Tier-1 findings + F20 (folded in because it's the same shape and the same 
 **Commit:** `4d0bee1` — `fix(pi): apply Gate A.5 Tier-1 findings (7 HIGH; F1-F7 + F20)`.
 
 **Handoff refresh:** Gate A.5 complete; next task #11 (Phase 6 — port v8 tests + items C and E).
+
+### 2026-05-17 — Task #11 — Phase 6 — Port v8 tests + Item C
+
+**Action:** copied 5 v8 test files into `tests/pi/`, renamed `pi_python_harness` → `libharness.pi` imports, renamed `tests.<X>` → `tests.pi.<X>` for inter-test imports, updated `fake_pi_rpc.py` to the v8 version while preserving the `data.received: request` echo on `set_model` so the existing v5 regression test still asserts on the wire shape, and added `pythonpath = ["."]` to `pyproject.toml` so cross-test imports resolve under `$VENV/bin/pytest`.
+
+**Files added/updated:**
+
+- `tests/pi/test_agent_class.py` (v8 + 3 Item-C tests appended)
+- `tests/pi/test_decision_hooks.py` (v8)
+- `tests/pi/test_channel_separation.py` (v8)
+- `tests/pi/test_pi_event_taxonomy.py` (v8; skips when pi-mono unavailable)
+- `tests/pi/test_threaded_agent.py` (v8)
+- `tests/pi/fake_pi_rpc.py` (v8 + set_model echo preservation)
+- `pyproject.toml` (pythonpath addition)
+
+**Item C — strict-mode E2E for decision events:** added 3 tests to `test_agent_class.py`:
+
+- `test_strict_mode_accepts_all_decision_events_notify_only` — fires every decision event via `_async_on_bridge_event` with `require_decision=False`; asserts every `on_<event>` hook fires.
+- `test_strict_mode_accepts_all_decision_events_with_decide` — same but with `require_decision=True`; asserts both observation and decision hooks fire.
+- `test_strict_mode_raises_on_unknown_decision_event` — strict subclass without hooks raises `UnhandledEventError` for unknown events.
+
+**Item E — `subscribe_client_events` simplification: DEFERRED.** The plumbing is owner-thread → loop-thread → list.append (two hops to a list mutation). The advisor recommendations doc rated it "low value too. Defer if it's contentious." Gate A.5 synthesis didn't flag it. Without deeper analysis of the owner/loop ownership semantics for the handler list, the safe call is to defer to the post-port ergonomic pass. Logged here per the operating mode (mid-port surprises get noted and proceeded past).
+
+**Surprises:**
+
+1. v8's fake_pi_rpc.py doesn't echo set_model requests via `data.received` (returns `data.id` instead). The existing v5 regression test `test_set_model_uses_modelId_field` expects `received`. Resolved by adding `received: request` to v8's fake's set_model response (preserves both v8 wire validation AND v5 regression coverage).
+1. v8 cross-test imports use `tests.<X>` (root layout); libharness uses `tests.pi.<X>` (subdir layout). Fixed by sed across the new files.
+1. After ruff auto-fixed import order in `test_agent_class.py`, `make all` failed because the cross-test `from tests.pi.test_threaded_agent import` wasn't resolvable under `$VENV/bin/pytest`. Fixed via `pythonpath = ["."]` in pyproject.
+
+**Tests/validation:** `make all` green on both venvs. 56 tests pass (was 25), 1 skipped (pi taxonomy needs pi-mono source).
+
+**Commit:** `90e93a9` — `test(pi): port v8 test suite + strict-mode E2E for decision events (Item C)`.
+
+### 2026-05-17 — Task #12 — Gate B — `make all` + `make test-live` on both venvs
+
+| Venv                  | `make all`           | `make test-live` |
+| --------------------- | -------------------- | ---------------- |
+| local.venv (3.11)     | 56 passed, 1 skipped | 2 passed (3.75s) |
+| local-ft.venv (3.14t) | 56 passed, 1 skipped | 2 passed (3.50s) |
+
+**Detail:** the 2 live tests (`test_real_llm.py`, `test_real_pi_integration.py`) round-trip Python → real pi (RPC mode) → real LLM (gpt-5.5 via ChatGPT OAuth) → tool call → bridge → Python tool → response → agent_end. The Tier-1 fixes and Phase 6 test port did not break the live path. Auth credential at `.sandbox/pi-home/.pi/agent/auth.json` (refresh-token backed, expires 2026-05-25 access, auto-rolls).
+
+**Handoff refresh:** Gate B complete; next task #13 (Phase 7 — update DESIGN.md + port AGENT_HOOKS.md).
+
+### 2026-05-17 — Task #13 — Phase 7 — DESIGN.md update + AGENT_HOOKS.md port
+
+**Action:** updated `docs/DESIGN.md` with the asyncio-in-thread architecture, threading-model paragraph, Agent-class paragraph, and 5 new 2026-05-17 resolved-decision rows (concurrency, hook surface layout, decision-hook return shape, cancellation API, timeout config). Marked the 2026-05-15 concurrency row as Superseded. Ported `docs/AGENT_HOOKS.md` from v8; renamed `pi_python_harness` → `libharness.pi`; applied sidecar pattern to the 19-row decision-event return-shape table (3 rows overflowed 150 cols).
+
+**Commit:** `8dcf6cc` — `docs: update DESIGN.md for asyncio-in-thread + Agent class; port AGENT_HOOKS.md`.
+
+### 2026-05-17 — Task #14 — Phase 8 — Mark superseded design notes
+
+**Action:** added supersede / closed notes to three pre-port dev-notes:
+
+- `dev-notes/2026-05-15-threads-rewrite-plan.md`: status `Ready for implementation` → `Superseded` with top-of-doc blockquote explaining the direction shift.
+- `dev-notes/2026-05-15-concurrency-model-discussion.md`: status `Resolved` → `Superseded`; similar treatment.
+- `dev-notes/2026-05-14-event-bridge-proposal.md`: status `In co-design` → `Closed (resolved by v8)`; explains that v8's gated-decide protocol answers the underlying question.
+
+**Surprise:** initial template inserted a duplicate H1 in two files (MD025 lint error). Fixed by keeping a single H1 and putting the supersede blockquote between H1 and body.
+
+**Commit:** `a0aa043` — `docs: mark threads-rewrite + concurrency-model docs superseded; close event-bridge proposal`.
+
+### 2026-05-17 — Task #15 — Phase 9 — SESSION-STATE.md rewrite
+
+**Action:** rewrote SESSION-STATE.md to reflect the post-port state. § Current state now describes the actually-landed architecture; § Pending tasks dropped the "port v8" entry and added the Tier-2 ergonomic-pass backlog; § Recent activity replaced the pre-port commit list with the 13 commits from the v8 port sprint; § Notes for next session dropped the two-branch-awareness paragraph and added pointers to the journal + handoff. Also bumped `dev-notes/2026-05-17-v8-port-plan.md` status to `Implemented`.
+
+**Commit:** `a4edb61` — `docs(session-state): reflect post-v8-port state`.
+
+### 2026-05-17 — Task #16 — Gate C — Final verification
+
+| Check                               | Result                                |
+| ----------------------------------- | ------------------------------------- |
+| `make all` on local.venv (3.11)     | 56 passed, 1 skipped                  |
+| `make all` on local-ft.venv (3.14t) | 56 passed, 1 skipped                  |
+| `make test-live` (both venvs)       | 2 passed each (real pi + real LLM)    |
+| `make lint-md`                      | 0 errors across 27 markdown files     |
+| Commit count vs `main`              | 17 commits (14 sprint + 3 pre-sprint) |
+
+**Detail:**
+
+- *make all:* lint + typecheck + tests. 56 unit tests pass on both Python versions. The 1 skipped is `test_pi_event_taxonomy.py` which needs the pi-mono source linked via `links/pi` or `PI_MONO_SOURCE` — expected skip on this checkout.
+- *make test-live:* round-trips real pi (RPC mode) + real LLM (gpt-5.5 via ChatGPT OAuth) on both venvs. Validates the entire bridge protocol end-to-end including the Phase 5.5 cherry-picks and the Gate A.5 Tier-1 fixes.
+- *make lint-md:* one pre-existing MD040 (missing fenced-code language on `dev-notes/2026-05-14-pi-internals-notes.md:108`) was surfaced and fixed by adding `text` as the language. All 27 md files clean.
+
+**Surprise during Gate C:** the journal accumulated some MD060 (table pipe alignment) drift from in-flight edits between mdformat passes. One `mdformat --wrap keep` over the journal cleared it; the journal then needed re-commit alongside the handoff in the final docs snapshot.
+
+**Open follow-ups (Tier-2 from Gate A.5 synthesis):** captured in `dev-notes/2026-05-17-v8-port-review-synthesis.md` § Tier 2 and threaded forward into `dev-notes/SESSION-STATE.md` § Pending tasks. Highlights: F8 (shared hook_executor contention with HITL), F9 (`_call`/close race), F11 (mutable class-default dict), F10 (`_handler_wants_context` keyword-only edge case). No single-commit fix; revisit when a real incident motivates the work.
+
+**Sprint complete.** This branch (`asyncio-in-thread`) is ready for final-diff review and merge. The architecture is `asyncio core in a dedicated thread + thread-owned PiAgentHarness proxy + Agent class with 112 hook ClassVars (37+37+19+19) and import-time consistency check`. Test surface: 56 unit + 2 live on both 3.11 and 3.14t.
+
+**Handoff refresh:** sprint complete; awaiting user final-diff review.

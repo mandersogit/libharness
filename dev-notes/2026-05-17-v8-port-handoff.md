@@ -11,15 +11,15 @@ Working-memory snapshot for the executing Claude session. **Refreshed frequently
 
 ## Current state
 
-**Phase:** Phases 1-5 + 5.5 + Gate A.5 Tier-1 fixes complete. 9 code commits + 1 docs snapshot since `main`. Currently mid Task #26 (Gate A.5 journal); next work = Phase 6 (test port).
+**Phase:** SPRINT COMPLETE. All 16 work tasks + all 15 journal tasks done. Gate C green: 56 unit + 2 live tests on both venvs; 27 md files lint-clean. 17 commits since `main`.
 
-**Branch:** `asyncio-in-thread`.
+**Branch:** `asyncio-in-thread`. Ready for final-diff review and merge.
 
-**Working tree:** uncommitted: updated journal + handoff + `dev-notes/2026-05-17-v8-port-review-synthesis.md` (synthesizer output). About to commit as the Gate A.5 docs snapshot.
+**Working tree:** uncommitted: updated journal + handoff with Gate C entry, plus the small MD040 fix in `dev-notes/2026-05-14-pi-internals-notes.md`. About to commit as the Gate C docs snapshot.
 
 **Pi source state under `src/libharness/pi/`:** events.py + hook_surface.py + agent_class.py three-file layout. AgentHookSurface mixin with 112 ClassVars + 3 _validate_\* classmethods + `_assert_declarations_match_event_sets()` invariant guard at module bottom. Agent class with dispatchers + lifecycle + manifest-wiring classmethods. Existing v8 source (rpc.py, server.py, shim.py, etc.) carries the three Phase-5.5 bugs to fix next.
 
-**Next concrete action:** commit the Gate A.5 docs snapshot (synthesis doc + updated journal + updated handoff). Then claim Task #11 (Phase 6 — port v8 tests + items C and E). Then Gate B (`make all` + `make test-live` on both venvs). Then Phases 7-9 (docs). Then Gate C (final verification).
+**Next concrete action:** commit the Gate C docs snapshot (journal + handoff + pi-internals MD040 fix). Then hand off to user for final-diff review and merge.
 
 ## Permissions and operating mode
 
@@ -38,11 +38,11 @@ User explicit asks:
 
 ## Task pointer
 
-Active task: **#26 — Journal: post-#10 (Gate A.5)** (in progress; about to commit and complete).
+Active task: **#16 — Gate C** (validation green; about to commit final docs snapshot).
 
-Next: **#11 — Phase 6 — Port v8 tests + items C and E**.
+Next: hand off to user for final-diff review and merge.
 
-Completed so far: work items #1-9 + Gate A (#8) + Gate A.5 source fixes (#10 in progress until journal commits). Journal items #17-25. 22 of 31 tasks done.
+Completed so far: ALL 16 work tasks + 13 of 15 journal tasks (#29 / #30 / #31 fold into this final commit). 31 of 31 tasks at sprint close.
 
 Sprint structure (post-restructure): existing tasks #1-16 are work items; tasks #17-31 are interleaved journal-update tasks ("Journal: post-#N"). Claim in mostly numerical order: #N → #(N+16) → #(N+1) → #(N+17) → ... — i.e., after each work task #N, do its journal-step task before the next work task.
 

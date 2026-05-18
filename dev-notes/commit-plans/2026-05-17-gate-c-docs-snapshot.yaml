@@ -1,0 +1,99 @@
+repo: .
+
+commits:
+  - message: |
+      docs: Gate C snapshot — v8 port sprint complete
+
+      Final docs commit for the v8 port sprint. Closes out the journal
+      and handoff with the Phase 7 / Phase 8 / Phase 9 / Gate C entries
+      and the final state pointer ("sprint complete; awaiting user
+      final-diff review and merge").
+
+      Also folds in a small markdown housekeeping fix:
+
+        - dev-notes/2026-05-14-pi-internals-notes.md: added `text` as
+          the fenced-code language on a previously-bare code fence at
+          line 108. Surfaced by `make lint-md` during Gate C; cleanup
+          unrelated to the v8 port but lands here to keep the lint
+          pass green.
+
+      ## Sprint summary
+
+      | Metric                          | Value                                        |
+      | ------------------------------- | -------------------------------------------- |
+      | Code commits (since `main`)     | 14 (setup + 9 phases + 1 cherry-pick + 1 Tier-1 fix + 2 docs snapshots) |
+      | Total commits                   | 17 (14 sprint + 3 pre-sprint design)         |
+      | Source files changed            | ~12 under `src/libharness/pi/`               |
+      | Test files added / updated      | 8 under `tests/pi/`                          |
+      | Unit tests (was → now)          | 7 → 56                                       |
+      | Live tests                      | 2 (unchanged; green on both venvs)           |
+      | Markdown files in lint scope    | 27 (all clean)                               |
+      | Adversarial-review findings     | 7 Tier-1 fixed; 22 Tier-2 deferred (audited) |
+
+      **Detail:**
+
+      - *Source layout:* `events.py` (~75 LOC) + `hook_surface.py`
+        (~340 LOC) + `agent_class.py` (~235 LOC) + `agent.py` (~495
+        LOC) + `runtime.py` (~220 LOC) + the existing v5 baseline
+        (`rpc.py`, `server.py`, `shim.py`, `tools.py`, `jsonl.py`,
+        `harness.py`, `cli.py`, `__init__.py`).
+      - *Hook surface:* 112 ClassVar slots on `AgentHookSurface` (37
+        on_/async_on_ × 2 = 74 notification + 19 decide_/async_decide_
+        × 2 = 38 decision; 112 total). Consistency-check guard at
+        import time.
+      - *Bug-fix path:* Phase 5.5 cherry-picked 3 pre-identified v8
+        bugs (CRITICAL dict-merge order, HIGH params validation,
+        MODERATE startup-probe leak). Gate A.5 8-reviewer adversarial
+        review + Opus synthesizer found 7 more Tier-1 HIGH findings
+        (sibling falsy-coercion at 2 more sites, exception-eats-reader
+        at 2 sites, malformed-frame logging gap, 64 KiB readuntil
+        ceiling, lock-drop races in `AsyncioLoopThread.start` and
+        `start_owner_thread`). All fixed with regression tests; the
+        synthesis doc enumerates Tier-2 findings for the post-port
+        ergonomic pass.
+      - *Test coverage:* 56 unit tests pass on Python 3.11 and 3.14t.
+        2 live tests pass against real pi + real LLM (gpt-5.5 via
+        ChatGPT OAuth). 1 test skipped (pi event taxonomy needs
+        pi-mono source linked).
+      - *Markdown:* 27 docs lint-clean. `docs/DESIGN.md` updated;
+        `docs/AGENT_HOOKS.md` ported from v8 with sidecar pattern
+        applied to the 19-row return-shape table. Three superseded
+        design docs carry top-of-doc explanatory notes.
+
+      ## What ships
+
+        - libharness.pi: full Agent + AgentHookSurface + 3-file split.
+        - 56 unit tests + 2 live tests covering hooks, decision events,
+          channel separation, threading model, taxonomy, and the bug
+          fixes from Phase 5.5 + Gate A.5.
+        - docs/DESIGN.md describing the post-port architecture.
+        - docs/AGENT_HOOKS.md with per-event return-shape reference.
+
+      ## What's deferred (Tier-2 backlog in synthesis doc + SESSION-STATE)
+
+        - F8: shared hook_executor contention under HITL.
+        - F9: `_call`/close race when owner thread is mid-shutdown.
+        - F10: `_handler_wants_context` keyword-only edge case (Item D).
+        - F11: `_decision_timeouts_ms` mutable class-default footgun.
+        - Item E: `subscribe_client_events` thread-bounce simplification.
+        - F14-F36: assorted MODERATE/MINOR items, mostly with
+          mitigations or no current load-bearing impact.
+
+      Pi-native session method wrappers and the three roadmap bridges
+      (command, state, UI) remain on the longer-term backlog.
+
+      ## Hand-off to author
+
+      Branch is ready for final-diff review and merge into `main`. The
+      audit trail lives in:
+
+        - `dev-notes/2026-05-17-v8-port-plan.md` (planning record)
+        - `dev-notes/2026-05-17-v8-port-journal.md` (running log)
+        - `dev-notes/2026-05-17-v8-port-handoff.md` (final-state snapshot)
+        - `dev-notes/2026-05-17-v8-port-review-synthesis.md` (Gate A.5)
+        - `dev-notes/SESSION-STATE.md` (post-port pointer for fresh sessions)
+    files:
+      - dev-notes/2026-05-17-v8-port-journal.md
+      - dev-notes/2026-05-17-v8-port-handoff.md
+      - dev-notes/2026-05-14-pi-internals-notes.md
+      - dev-notes/commit-plans/2026-05-17-gate-c-docs-snapshot.yaml
