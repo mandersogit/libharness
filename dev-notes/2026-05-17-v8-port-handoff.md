@@ -11,15 +11,15 @@ Working-memory snapshot for the executing Claude session. **Refreshed frequently
 
 ## Current state
 
-**Phase:** Gate A complete. Phases 1-5 source-side port + consistency check done. 6 code commits since `main`. Awaiting user check-in before Phase 5.5 (cherry-picks).
+**Phase:** Phases 1-5 + 5.5 + Gate A.5 Tier-1 fixes complete. 9 code commits + 1 docs snapshot since `main`. Currently mid Task #26 (Gate A.5 journal); next work = Phase 6 (test port).
 
 **Branch:** `asyncio-in-thread`.
 
-**Working tree:** journal + handoff staged for commit as the Gate A docs snapshot. Last code commit: `4c1a615` (Phase 5 — consistency check).
+**Working tree:** uncommitted: updated journal + handoff + `dev-notes/2026-05-17-v8-port-review-synthesis.md` (synthesizer output). About to commit as the Gate A.5 docs snapshot.
 
 **Pi source state under `src/libharness/pi/`:** events.py + hook_surface.py + agent_class.py three-file layout. AgentHookSurface mixin with 112 ClassVars + 3 _validate_\* classmethods + `_assert_declarations_match_event_sets()` invariant guard at module bottom. Agent class with dispatchers + lifecycle + manifest-wiring classmethods. Existing v8 source (rpc.py, server.py, shim.py, etc.) carries the three Phase-5.5 bugs to fix next.
 
-**Next concrete action:** commit journal+handoff snapshot, then **pause** at this user check-in. On confirmation: claim Task #9 (Phase 5.5 — cherry-pick 3 v8 bugs with regression tests). After Phase 5.5: Gate A.5 (8-reviewer adversarial review + Opus synthesis).
+**Next concrete action:** commit the Gate A.5 docs snapshot (synthesis doc + updated journal + updated handoff). Then claim Task #11 (Phase 6 — port v8 tests + items C and E). Then Gate B (`make all` + `make test-live` on both venvs). Then Phases 7-9 (docs). Then Gate C (final verification).
 
 ## Permissions and operating mode
 
@@ -27,8 +27,8 @@ User granted on 2026-05-17:
 
 - `commit-plans` skill authorized for ALL sprint commits; do not ask per-commit.
 - Mid-port design surprises: spawn 4-LLM discussion (2× codex gpt-5.5 xhigh via `~/.local/bin/codex exec -c model_reasoning_effort="xhigh" --sandbox danger-full-access`, plus 2× Opus via Agent tool); proceed with noted resolution if confident; defer otherwise; log either way in journal.
-- Gate A.5: 8 reviewers (2× codex generalist + 4× codex specialist + 2× Opus generalist) → Opus subagent synthesizes into `dev-notes/2026-05-17-v8-port-review-synthesis.md`.
-- Check-in points with user: Gate A (source done), Gate A.5 (synthesis fix list), Gate C (final diff). NOT per-phase.
+- Gate A.5: 8 reviewers (2× codex generalist + 4× codex specialist + 2× Opus generalist) → Opus subagent synthesizes into `dev-notes/2026-05-17-v8-port-review-synthesis.md`. Apply Tier-1 fixes autonomously (the Opus synthesizer is the impartial arbiter; no user gate needed).
+- **NO scheduled user check-ins** through the sprint. Run continuously from Phase 1 through Gate C. The only mid-stream stops are: (a) a design surprise the 4-LLM council can't resolve, in which case defer that part and continue with what's resolvable; (b) the natural end of work at Gate C, where the user reviews the full diff. (Earlier handoff iterations had me pausing at Gate A / Gate A.5 / Gate C; the user clarified 2026-05-17 that those mid-stream pauses were a self-imposed misreading.)
 
 User explicit asks:
 
@@ -38,11 +38,11 @@ User explicit asks:
 
 ## Task pointer
 
-Active task: **#8 — Gate A** (validation done; about to commit docs snapshot and pause for user check-in).
+Active task: **#26 — Journal: post-#10 (Gate A.5)** (in progress; about to commit and complete).
 
-Next on user "go": **#9 — Phase 5.5 — Cherry-pick three known v8 bugs**.
+Next: **#11 — Phase 6 — Port v8 tests + items C and E**.
 
-Completed so far: work items #1-7 (setup-tooling, journal/handoff scaffolding, Phases 1-5) + journal items #17-23. 14 of 31 tasks done.
+Completed so far: work items #1-9 + Gate A (#8) + Gate A.5 source fixes (#10 in progress until journal commits). Journal items #17-25. 22 of 31 tasks done.
 
 Sprint structure (post-restructure): existing tasks #1-16 are work items; tasks #17-31 are interleaved journal-update tasks ("Journal: post-#N"). Claim in mostly numerical order: #N → #(N+16) → #(N+1) → #(N+17) → ... — i.e., after each work task #N, do its journal-step task before the next work task.
 

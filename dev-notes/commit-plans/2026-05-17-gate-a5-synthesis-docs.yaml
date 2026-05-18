@@ -1,0 +1,45 @@
+repo: .
+
+commits:
+  - message: |
+      docs: Gate A.5 review synthesis + journal/handoff snapshot
+
+      Commits the docs artifacts from Gate A.5:
+
+        - dev-notes/2026-05-17-v8-port-review-synthesis.md (new):
+          synthesizer-written doc consolidating findings from the 8
+          adversarial reviewers. Authored by a separate Opus session
+          with no implementation history — the impartial-arbiter role
+          that addresses the self-bias concern called out in the
+          operating-mode discussion. Classifies findings as Tier-1
+          (7 entries, all HIGH — applied in commit 4d0bee1) or
+          Tier-2 (deferred to ergonomic pass / Phase 6 test work).
+          The de-duplication table at the bottom maps every Tier-1
+          and Tier-2 finding back to the raw reviewer that flagged it.
+
+        - dev-notes/2026-05-17-v8-port-journal.md (update): adds
+          entries for the operating-mode correction (no scheduled
+          Gate-A pause), Task #9 (Phase 5.5 cherry-picks), and the
+          full Task #10 (Gate A.5) audit trail — spawn details, all
+          8 reviewer focus areas, synthesizer output, Tier-1 fix
+          application, flake-check results.
+
+        - dev-notes/2026-05-17-v8-port-handoff.md (update): refreshed
+          "Current state" + "Task pointer" for the post-Gate-A.5
+          state. 22 of 31 tasks complete; next work = Phase 6.
+
+      Three context refresh points landed alongside this commit (Gate A
+      docs at e62b085, this Gate A.5 docs, future Gate B/C docs at the
+      end). Each is a deliberate recovery point for a post-compaction
+      session.
+
+      The synthesis doc itself is the canonical record of Gate A.5;
+      `/tmp/v8-port-review-*.md` and `/tmp/codex-prompt-*.txt` are the
+      raw artifacts but are NOT committed (process-local; reviewers
+      can be re-run if needed).
+    files:
+      - dev-notes/2026-05-17-v8-port-review-synthesis.md
+      - dev-notes/2026-05-17-v8-port-journal.md
+      - dev-notes/2026-05-17-v8-port-handoff.md
+      - dev-notes/commit-plans/2026-05-17-gate-a5-tier1-fixes.yaml
+      - dev-notes/commit-plans/2026-05-17-gate-a5-synthesis-docs.yaml

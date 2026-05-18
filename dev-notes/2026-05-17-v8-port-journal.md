@@ -249,3 +249,96 @@ On any mismatch, raises `AssertionError` listing the offenders. Helper is ~40 LO
 **Decision:** this is a user check-in point per the operating mode. Awaiting user confirmation before proceeding to Phase 5.5. Journal + handoff get committed now (together) as the Gate A docs snapshot, since they've grown substantially since the start and a clean recovery point is useful before the larger Phase 5.5 / Gate A.5 work.
 
 **Handoff refresh:** Gate A complete; awaiting user check-in; next work = Task #9 (Phase 5.5 cherry-picks).
+
+### 2026-05-17 — Operating-mode correction (post-Gate A)
+
+User clarified that my Gate A stop was a misread. The check-in points I'd written into the handoff doc ("pause at Gate A / Gate A.5 / Gate C") were originally a proposal from my readiness report, not a user-confirmed policy. The actual policy is: run continuously through the sprint; council-resolve surprises in-flight; defer-and-continue if council can't resolve; the only natural stop is at Gate C when the work is done. Handoff doc updated. Resuming Phase 5.5 immediately.
+
+### 2026-05-17 — Task #9 — Phase 5.5 — Cherry-pick three v8 bugs
+
+**Action:** applied three pre-identified fixes and added regression tests for each, all in one commit.
+
+**Fixes (all verified at file:line beforehand against v8 source):**
+
+- **Check 1 (CRITICAL) — `rpc.py:411`:** swapped `{"type": ..., "id": ..., **response}` to `{**response, "type": ..., "id": ...}`. Inline comment notes the dict-eval-order constraint. A UI handler returning `{"id": "EVIL"}` can no longer corrupt the correlation id pi sees.
+- **Check 4 (HIGH) — `server.py:235`:** replaced `params = request.get("params") or {}` with `request.get("params", {})` + explicit None-check, before the existing isinstance gate. Falsy non-dict values now error instead of silently coercing to `{}`.
+- **Check 7 (MODERATE) — `rpc.py:178-183`:** factored cleanup into new `_cleanup_after_startup_failure()` helper. When the probe detects pi exited, the helper closes stdin, cancels both reader tasks, awaits via `asyncio.gather(return_exceptions=True)`, resets the slots to None, and reaps the subprocess before the original `PiRpcProcessError` re-raises.
+
+**Regression tests (new file `tests/pi/test_v8_cherrypick_fixes.py`, 3 tests / 6 cases):**
+
+- `test_extension_ui_response_framework_keys_win` — constructs a PiRpcClient with a never-started fake-pi command, monkeypatches `_send_extension_ui_response` to capture the frame, installs a handler that returns `{"id": "EVIL", "type": "evil-type", ...}`, calls `_handle_extension_ui_request` directly, asserts framework keys win.
+- `test_execute_params_rejects_non_dict_falsy_values` — parametrized on `[]`, `0`, `""`, `False`; each sent to the real `PythonToolServer` wire and expected to surface a `success: False` error response containing `"params must be an object"`.
+- `test_startup_probe_cleanup_on_pi_exit` — launches `[sys.executable, "-c", "import sys; sys.exit(1)"]` as the pi command; expects `PiRpcProcessError`, asserts both task slots are None (cleanup ran) and `process.returncode is not None` (subprocess reaped).
+
+**Tests/validation:** all 6 cases pass; total test count now 13 (was 7); `make all` green on both venvs.
+
+**Surprise — ruff import-order:** the new test file's imports needed reordering (`pytest` between stdlib and local). Auto-fixed.
+
+**Commit:** `de0fe82` — `fix(pi): cherry-pick three v8 bugs surfaced in threads-rewrite review`.
+
+**Handoff refresh:** next task #10 (Gate A.5 — 8-reviewer adversarial review + Opus synthesis). Tier-1 fixes will be applied autonomously.
+
+### 2026-05-17 — Task #10 — Gate A.5 — 8-reviewer adversarial review + Opus synthesis (in flight)
+
+**Implementation summary** written to `/tmp/v8-port-implementation-summary.md` (~7KB priming doc). Covers what changed in each phase, the architecture, the three Phase 5.5 fixes, carried-forward decisions, and reviewer logistics.
+
+**8 reviewers spawned in parallel:**
+
+- **codex-gen-1** (codex gpt-5.5 xhigh, generalist) — full-coverage independent review.
+- **codex-gen-2** (codex gpt-5.5 xhigh, generalist) — different angle: diff vs v8 source-of-record, verify checks 2/3/5/6/8 are actually N/A as claimed in the recommendations doc, audit test coverage gaps.
+- **codex-spec-hooks** (codex gpt-5.5 xhigh, specialist) — focus on `agent_class.py`, `hook_surface.py`, `events.py`: MRO, validation, dispatcher, AgentEvent immutability, HookContext cancellation.
+- **codex-spec-wire** (codex gpt-5.5 xhigh, specialist) — focus on `server.py`, `shim.py`, `jsonl.py`: frame construction, token handling, manifest serialization, TS shim gate model, JSONL strictness.
+- **codex-spec-rpc** (codex gpt-5.5 xhigh, specialist) — focus on `rpc.py`: subprocess lifecycle, reader tasks, startup probe cleanup, UI handler dict-merge fix, send/receive correlation, process termination.
+- **codex-spec-thread** (codex gpt-5.5 xhigh, specialist) — focus on `runtime.py`, `agent.py`: AsyncioLoopThread, owner-thread queue, executor boundaries, threading.Event memory visibility, concurrent harness lifecycle.
+- **opus-gen-1** (Opus generalist via Agent tool) — broad review with emphasis on cross-file invariants, ordering, contract mismatches, tests that pass for the wrong reason.
+- **opus-gen-2** (Opus generalist via Agent tool) — different angle: documentation/code drift, consistency-check coverage walk-through, gate-model end-to-end trace, MRO with user subclasses, concurrency stress.
+
+**Output paths:** each writes to `/tmp/v8-port-review-<reviewer-id>.md`. Background Bash for codex, run_in_background Agent calls for Opus. Wall-clock estimate: 10-30 minutes total.
+
+**Synthesizer (planned):** after all 8 reviews land, spawn one more Opus subagent (run_in_background, fresh context, no implementation history) to read all 8 reviews + the implementation summary, classify findings by tier and multi-reviewer agreement, produce `dev-notes/2026-05-17-v8-port-review-synthesis.md`. Then I apply Tier-1 fixes autonomously (the synthesizer is the impartial arbiter — no user gate needed for routine Tier-1 application).
+
+**This entry is mid-task.** Next journal addendum after the synthesizer lands and any Tier-1 fixes are applied.
+
+#### Synthesis result
+
+8 reviewers ran in parallel, each writing `/tmp/v8-port-review-<id>.md`. After all eight completed, a separate Opus synthesizer (fresh context, no implementation history — impartial arbiter) read all 8 reviews + the implementation summary and produced `dev-notes/2026-05-17-v8-port-review-synthesis.md`.
+
+**Headline:** 0 CRITICAL, 7 Tier-1 (all HIGH), ~22 Tier-2 deferred. After de-dup, ~20 unique findings. The three Phase 5.5 cherry-picks held up — no reviewer flagged a regression in them.
+
+**Tier-1 set (synthesizer's classification):**
+
+- **F1** — `event.data` falsy-coercion at `server.py:199`. Same shape as Phase 5.5's `params` fix; sibling site missed. 2-reviewer agreement; opus-gen-1 reproduced live.
+- **F2** — envelope `event` vs inner `data.type` mismatch silently dispatching the wrong hook. 2-reviewer agreement.
+- **F3** — UI handler exception kills `_read_stdout_loop`. 2-reviewer agreement; opus-gen-1 reproduced live.
+- **F4** — Event subscriber exception kills `_read_stdout_loop`. Particularly bad with strict-mode `Agent._async_on_event` raising `UnhandledEventError` on unknown pi events. 2-reviewer agreement; opus-gen-1 reproduced live.
+- **F5** — malformed bridge requests silently swallowed (no log). Promoted to Tier-1 because it's in the same silent-failure family as F1/F2.
+- **F6** — 64 KiB `readuntil` ceiling on the bridge silently truncates large frames. 1-reviewer (codex-gen-1) but a one-line fix for silent data loss.
+- **F7** — `AsyncioLoopThread.start()` and `start_owner_thread()` drop their locks before waiting — concurrent callers spawn duplicate threads. 1-reviewer (codex-spec-thread, two related findings).
+
+**Tier-2 set** (deferred to post-port ergonomic pass or Phase 6 test work): F8-F36 covering shared `hook_executor` contention, `_call`/close races, `_handler_wants_context` keyword-only edge case, `_decision_timeouts_ms` mutable class-default footgun, `Agent.__init__` silent-override of three kwargs, `watch_disconnect` cancelled-on-completion semantic, reader-task-death-doesn't-tear-down-pi, `close()` hang on swallowed CancelledError, `ProcessLookupError` in SIGTERM, `Agent`-not-tested-at-all (Phase 6 owns), plus ~16 single-reviewer MINOR / MODERATE entries.
+
+**Honored author resolutions:** `_decision_timeout_ms` default stays `None` despite no reviewer recommending a non-None default specifically (the synth doc noted "do NOT recommend changing this default to 30s no matter what reviewers say" per the carried-forward HITL resolution). Items A/B/D/F deferred as resolved.
+
+#### Tier-1 fix application
+
+All 7 Tier-1 findings + F20 (folded in because it's the same shape and the same file as F1) applied in commit `4d0bee1`. Synthesizer recommended two commits (server.py vs rpc/runtime/agent); folded into one for atomic application and to keep the regression-test file (`tests/pi/test_gate_a5_tier1_fixes.py`, 12 cases) cohesive.
+
+**Files touched:** `server.py` (F1/F2/F5/F6/F20), `rpc.py` (F3/F4 + added `import logging` + `_LOG`), `runtime.py` (F7a — `_ready.wait()` moved inside lock), `agent.py` (F7b — added `_owner_start_lock = threading.Lock()`, guarded start_owner_thread sequence).
+
+**Regression tests added** (`tests/pi/test_gate_a5_tier1_fixes.py`, 12 cases, all green):
+
+- `test_bridge_event_data_rejects_non_dict_falsy_values` (parametrized 4 cases) — F1.
+- `test_bridge_envelope_mismatched_inner_type_rejected` — F2 rejection.
+- `test_bridge_envelope_matching_inner_type_passes` — F2 happy path.
+- `test_ui_handler_exception_does_not_kill_reader` — F3.
+- `test_event_subscriber_exception_does_not_kill_reader` — F4.
+- `test_malformed_bridge_request_logged` — F5 (caplog).
+- `test_large_bridge_frame_dispatches` — F6 (1 MiB payload).
+- `test_asyncio_loop_thread_start_is_thread_safe` — F7a (8 concurrent callers).
+- `test_pi_agent_harness_owner_thread_start_is_thread_safe` — F7b.
+
+**Validation:** `make all` × 3 runs on `local.venv` (3.11) and × 3 runs on `local-ft.venv` (3.14t) — 6/6 clean, no flakes. 25 tests total (was 13).
+
+**Commit:** `4d0bee1` — `fix(pi): apply Gate A.5 Tier-1 findings (7 HIGH; F1-F7 + F20)`.
+
+**Handoff refresh:** Gate A.5 complete; next task #11 (Phase 6 — port v8 tests + items C and E).
