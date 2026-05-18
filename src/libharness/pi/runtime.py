@@ -65,10 +65,15 @@ class AsyncioLoopThread:
                 target=self._run, name=self.thread_name, daemon=self.daemon
             )
             self._thread.start()
-        self._ready.wait()
-        if self._loop is None:
-            raise RuntimeError("asyncio loop thread failed to start")
-        return self
+            # Keep `_ready.wait()` inside the lock. Otherwise two threads can
+            # both pass the `is_running` check (the first thread hasn't set
+            # the loop running yet), each construct and start a Thread, and
+            # the second stomp `self._thread` — leaking the first and routing
+            # all subsequent work onto a thread `stop()` won't join.
+            self._ready.wait()
+            if self._loop is None:
+                raise RuntimeError("asyncio loop thread failed to start")
+            return self
 
     def submit(self, coro: Coroutine[Any, Any, Any]) -> concurrent.futures.Future[Any]:
         """Schedule *coro* on the loop thread and return a concurrent future."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import logging
 import os
 import signal
 import sys
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from .jsonl import StrictJsonlDecoder, dumps_line
+
+_LOG = logging.getLogger(__name__)
 
 JsonObject = dict[str, Any]
 EventHandler = Callable[[JsonObject], None | Awaitable[None]]
@@ -410,9 +413,20 @@ class PiRpcClient:
     async def _dispatch_event(self, event: JsonObject) -> None:
         await self._events.put(event)
         for handler in list(self._event_handlers):
-            result = handler(event)
-            if inspect.isawaitable(result):
-                await result
+            # Subscriber exceptions must not propagate up — they reach
+            # `_read_stdout_loop`'s `await` and kill the reader task, which
+            # silently deafens the harness (no events, no responses, pending
+            # requests stall until timeout). Log and continue with the next
+            # subscriber. Honor CancelledError so the loop teardown still
+            # works.
+            try:
+                result = handler(event)
+                if inspect.isawaitable(result):
+                    await result
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOG.exception("event subscriber failed for event %s", event.get("type"))
 
     async def _handle_extension_ui_request(self, request: JsonObject) -> None:
         method = str(request.get("method") or "")
@@ -425,8 +439,18 @@ class PiRpcClient:
         handler = self._ui_handlers.get(method) or self._fallback_ui_handler
         response: JsonObject | None = None
         if handler is not None:
-            maybe = handler(request)
-            response = await maybe if inspect.isawaitable(maybe) else maybe
+            # A user-supplied UI handler raising must not kill the reader task.
+            # Log and fall through to the framework's default response so pi
+            # still gets a correlated reply (otherwise pi waits until its own
+            # UI timeout fires and downstream tests stall).
+            try:
+                maybe = handler(request)
+                response = await maybe if inspect.isawaitable(maybe) else maybe
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOG.exception("UI handler failed for method %s", method)
+                response = None
         if response is None:
             response = self._default_ui_response(method)
         # Framework keys (type, id) must override anything the handler returns.

@@ -101,7 +101,17 @@ class PythonToolServer:
     async def start(self) -> BridgeEndpoint:
         if self._server is not None:
             return self.endpoint
-        self._server = await asyncio.start_server(self._handle_client, self.host, self.port)
+        # Match StrictJsonlDecoder's max_buffer_bytes (8 MiB). The default
+        # StreamReader limit is 64 KiB; without this, real-world bridge frames
+        # carrying large payloads (e.g., compaction message arrays, large tool
+        # argument blobs) hit LimitOverrunError on readuntil and silently
+        # disappear into _serve_client's exception handler.
+        self._server = await asyncio.start_server(
+            self._handle_client,
+            self.host,
+            self.port,
+            limit=8 * 1024 * 1024,
+        )
         return self.endpoint
 
     async def close(self) -> None:
@@ -152,7 +162,13 @@ class PythonToolServer:
                     writer, request, success=False, error=f"incomplete bridge request: {exc}"
                 )
         except Exception as exc:
-            if request is not None and request.get("type") != "notify_event":
+            if request is None:
+                # Malformed-frame failures (bad JSON, oversized frame, decode
+                # error, timeout) leave request=None. notify_event-style
+                # silence on the wire is the right contract, but the operator
+                # gets no signal without an explicit log here.
+                _LOG.warning("malformed bridge request: %s", exc, exc_info=True)
+            elif request.get("type") != "notify_event":
                 await self._write_response(
                     writer,
                     request,
@@ -196,11 +212,26 @@ class PythonToolServer:
         if self.event_handler is None:
             return None
         event_name = str(request.get("event") or "")
-        data = request.get("data") or {}
+        # Match the params-validation pattern from _dispatch_execute: don't let
+        # `or {}` coerce falsy non-dict values into {} before the isinstance
+        # check runs. Treat missing / None as {} and reject everything else.
+        data = request.get("data", {})
+        if data is None:
+            data = {}
         if not isinstance(data, dict):
             raise ToolError("event.data must be an object")
         event = dict(data)
-        event.setdefault("type", event_name)
+        # The bridge envelope's `event` field is authoritative — it's the name
+        # the TS shim subscribed under and the gate the Python side opens. If
+        # the inner data carries a different type, the shim or an attacker is
+        # confusing the dispatcher; reject loudly. Envelope wins unconditionally.
+        inner_type = event.get("type")
+        if inner_type is not None and inner_type != event_name:
+            raise ToolError(
+                f"bridge envelope event={event_name!r} does not match "
+                f"data.type={inner_type!r}"
+            )
+        event["type"] = event_name
         cancelled = threading.Event()
 
         async def watch_disconnect() -> None:
@@ -270,7 +301,14 @@ class PythonToolServer:
 
         watcher = asyncio.create_task(watch_disconnect())
         try:
-            metadata = dict(request.get("context") or {})
+            # Same falsy-coercion guard as params/data above. `context` is
+            # informational metadata but the bug-class is identical.
+            context_obj = request.get("context", {})
+            if context_obj is None:
+                context_obj = {}
+            if not isinstance(context_obj, dict):
+                raise ToolError("execute.context must be an object")
+            metadata = dict(context_obj)
             metadata.setdefault("toolExecutor", bool(self.tool_executor))
             if self.tool_executor is None:
                 ctx = ToolContext(

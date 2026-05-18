@@ -1,0 +1,136 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): apply Gate A.5 Tier-1 findings (7 HIGH; F1-F7 + F20)
+
+      Gate A.5 ran 8 adversarial reviewers in parallel (6 codex gpt-5.5 xhigh:
+      2 generalist + 4 specialist on hooks/wire/rpc/thread; 2 Opus generalists)
+      against commit `de0fe82`. A separate Opus session synthesized the
+      findings into `dev-notes/2026-05-17-v8-port-review-synthesis.md`,
+      classifying 7 findings as Tier-1 (must fix before merge) — all HIGH,
+      no CRITICALs.
+
+      The synthesizer recommended two commits (server.py vs rpc/runtime/
+      agent). Folded into one here to keep the regression-test file
+      atomic; the journal and commit message split the audit trail.
+
+      ## server.py (bridge input validation)
+
+      ### F1: `event.data` falsy-coercion — same shape as Phase 5.5's `params` fix
+
+      2-reviewer agreement (codex-spec-wire, opus-gen-1; opus-gen-1
+      reproduced live). `_dispatch_bridge_event` read
+      `data = request.get("data") or {}` then `isinstance(data, dict)` —
+      the `or {}` coerced `[]`/`0`/`""`/`False` to `{}` before the type
+      check. Fix: use `.get(default)` + None-check + isinstance.
+
+      ### F2: envelope `event` not authoritative against inner `data.type`
+
+      2-reviewer agreement (codex-spec-wire, codex-gen-1).
+      `event.setdefault("type", event_name)` let inner data.type win;
+      a shim or attacker sending `{event:tool_call, data:{type:session_compact}}`
+      dispatched the wrong hook. Fix: raise on mismatch, then envelope
+      wins unconditionally.
+
+      ### F5: malformed bridge requests silently swallowed (no log)
+
+      Promoted to Tier-1 because it's silent-correctness loss on the same
+      family as F1/F2. `_serve_client`'s outer `except Exception` did not
+      log when `request is None` (malformed JSON / oversized frame /
+      decode error). Fix: `_LOG.warning("malformed bridge request", exc_info=True)`.
+
+      ### F6: 64 KiB `readuntil` ceiling silently truncates large frames
+
+      1-reviewer (codex-gen-1) but a one-line fix for silent data loss
+      on legitimate large payloads (session_compact, tool_call). Fix:
+      `asyncio.start_server(..., limit=8 * 1024 * 1024)` to match the
+      decoder's max_buffer_bytes.
+
+      ### F20: `request.get("context") or {}` — same family as F1
+
+      Tier-2 in the synthesis doc but folded here since it's the same
+      shape and the same file. `_dispatch_execute`'s `context` extraction
+      gets the same .get(default) + None-check + isinstance shape.
+
+      ## rpc.py + runtime.py + agent.py (user callbacks + startup race)
+
+      ### F3: UI handler exception kills the RPC stdout reader
+
+      2-reviewer (opus-gen-1, codex-spec-rpc; opus-gen-1 reproduced live).
+      `_handle_extension_ui_request` invoked the user handler with no
+      try/except; an exception propagated up through `_read_stdout_loop`
+      and killed the reader task — silent harness death. Fix: try/except
+      around the handler call, log, fall through to the framework default
+      response. `CancelledError` is explicitly re-raised so loop teardown
+      still works. Required adding `import logging` + `_LOG =
+      logging.getLogger(__name__)` to rpc.py (was absent).
+
+      ### F4: Event subscriber exception kills the RPC stdout reader
+
+      2-reviewer (opus-gen-1, codex-spec-rpc). Same shape as F3 but in
+      `_dispatch_event`'s subscriber loop. Especially load-bearing for
+      `Agent._async_on_event`, which raises `UnhandledEventError` in
+      strict mode for unknown pi events — pi can and will emit events
+      the Agent's surface doesn't enumerate, and strict-mode users are
+      the exact users who care about errors being reported. Fix:
+      try/except inside the loop, log, continue. CancelledError
+      re-raised.
+
+      ### F7: `AsyncioLoopThread.start()` and `start_owner_thread()` lock-drop races
+
+      1-reviewer (codex-spec-thread, two related findings). Both held
+      their lock only across thread construction + `.start()`, then
+      dropped the lock before `_ready.wait()` / `_owner_ready.result()`.
+      Two concurrent callers could both pass the "is_running" / "is None"
+      check, both construct and start a Thread, and the second stomp
+      `self._thread` / `self._owner_thread`. The first one would trip
+      `set_result(None)` and the second hit `InvalidStateError`.
+
+      Fix:
+      - `AsyncioLoopThread.start`: move `_ready.wait()` inside `with
+        self._start_lock` so the whole sequence is atomic.
+      - `PiAgentHarness`: add a new `_owner_start_lock = threading.Lock()`;
+        guard the check + assign + start + wait sequence in
+        `start_owner_thread` under it.
+
+      ## Regression tests
+
+      `tests/pi/test_gate_a5_tier1_fixes.py` (new file, 12 test cases):
+
+        - test_bridge_event_data_rejects_non_dict_falsy_values
+          (parametrized [], 0, "", False) — F1.
+        - test_bridge_envelope_mismatched_inner_type_rejected — F2.
+        - test_bridge_envelope_matching_inner_type_passes — F2 happy path.
+        - test_ui_handler_exception_does_not_kill_reader — F3 + subsequent
+          call still works.
+        - test_event_subscriber_exception_does_not_kill_reader — F4 +
+          good handler still fires.
+        - test_malformed_bridge_request_logged — F5 (caplog assertion).
+        - test_large_bridge_frame_dispatches — F6 (1 MiB payload).
+        - test_asyncio_loop_thread_start_is_thread_safe — F7a (8
+          concurrent start() callers must observe one ident).
+        - test_pi_agent_harness_owner_thread_start_is_thread_safe — F7b
+          (same shape on the owner thread).
+
+      F20 is covered by extending the type check that already exists; no
+      separate test (same coverage shape as F1's params parametrized test
+      in test_v8_cherrypick_fixes.py).
+
+      ## Acceptance
+
+        - All 12 new test cases pass on local.venv (3.11) and
+          local-ft.venv (3.14t).
+        - Existing 13 tests still pass (25 total).
+        - Ruff / mypy / pyright clean on both venvs.
+
+      Tier-2 findings (F8-F36) defer to the post-port ergonomic pass or
+      Phase 6 test work; see the synthesis doc for full enumeration and
+      reasoning.
+    files:
+      - src/libharness/pi/server.py
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/runtime.py
+      - src/libharness/pi/agent.py
+      - tests/pi/test_gate_a5_tier1_fixes.py
+      - dev-notes/commit-plans/2026-05-17-gate-a5-tier1-fixes.yaml

@@ -100,6 +100,7 @@ class PiAgentHarness:
         self._owner_thread: threading.Thread | None = None
         self._owner_thread_name = owner_thread_name
         self._owner_ready: concurrent.futures.Future[None] = concurrent.futures.Future()
+        self._owner_start_lock = threading.Lock()
         self._core: _PiAgentHarnessCore | None = None
         self._core_kwargs: dict[str, Any] = {
             "harness_id": self.harness_id,
@@ -146,17 +147,26 @@ class PiAgentHarness:
     def start_owner_thread(self) -> PiAgentHarness:
         if not self.threaded:
             return self
-        if self._owner_thread is not None:
+        # Guard the check + assign + start + wait sequence under a lock.
+        # Two concurrent callers can both pass the `is None` check, both
+        # construct a Thread, and the second stomp `self._owner_thread` —
+        # the first thread then trips `_owner_ready.set_result(None)` and
+        # the second hits InvalidStateError. The lock keeps "exactly one
+        # owner thread per harness" true regardless of caller threading.
+        with self._owner_start_lock:
+            if self._owner_thread is not None:
+                return self
+            # Start the shared loop first. In normal embedding this makes the
+            # asyncio loop the first library-owned thread, leaving later threads
+            # for individual harness owners.
+            self.runtime.start()
+            name = self._owner_thread_name or f"PiAgentHarness-{self.harness_id}"
+            self._owner_thread = threading.Thread(
+                target=self._owner_loop, name=name, daemon=True
+            )
+            self._owner_thread.start()
+            self._owner_ready.result(timeout=10)
             return self
-        # Start the shared loop first. In normal embedding this makes the
-        # asyncio loop the first library-owned thread, leaving later threads for
-        # individual harness owners.
-        self.runtime.start()
-        name = self._owner_thread_name or f"PiAgentHarness-{self.harness_id}"
-        self._owner_thread = threading.Thread(target=self._owner_loop, name=name, daemon=True)
-        self._owner_thread.start()
-        self._owner_ready.result(timeout=10)
-        return self
 
     def start(self) -> PiAgentHarness:
         self._call(lambda core: core.start())
