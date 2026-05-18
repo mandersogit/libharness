@@ -433,3 +433,92 @@ All 7 Tier-1 findings + F20 (folded in because it's the same shape and the same 
 **Sprint complete.** This branch (`asyncio-in-thread`) is ready for final-diff review and merge. The architecture is `asyncio core in a dedicated thread + thread-owned PiAgentHarness proxy + Agent class with 112 hook ClassVars (37+37+19+19) and import-time consistency check`. Test surface: 56 unit + 2 live on both 3.11 and 3.14t.
 
 **Handoff refresh:** sprint complete; awaiting user final-diff review.
+
+______________________________________________________________________
+
+## Post-Gate-C: ergonomic-pass sprint
+
+After Gate C, the user requested that I fix as many "fix-now" items from the deferred-items doc as I could. 25 of 28 items landed across 4 batches (commits `02cc67a` / `d90d626` / `13dd691` / `67eea24`); F8 and F14 are genuine design calls and stay on the fix-now list for a future session running the 4-LLM council.
+
+### Batch 1 — `02cc67a` — diagnostics + session wrappers + generator test
+
+7 items (cluster 1 + D.2 + E.1):
+
+- **A.1 / F26** — decision-hook exception logged once not twice (sentinel attribute on the exception).
+- **F28** — `cast(object, Agent)` workaround documented inline.
+- **F29** — `PiLaunchConfig.startup_timeout` misleading-name documented inline.
+- **F32** — `_check_owner` error includes `harness_id`.
+- **F35** — Tool params with reserved names (`ctx` / `context` / `tool_context`) raise at decoration time if their annotation isn't `ToolContext` or a Union containing it. Extracted `_hint_includes_tool_context` helper.
+- **F21** — `AgentHookSurface` direct-subclassing risk now documented in class docstring (item itself stays deferred).
+- **D.2** — Pi-native session method wrappers (7 typed methods on `PiRpcClient`) delegated to an Opus subagent in a worktree. Subagent verified pi's actual RPC contract (`rpc-types.ts`) and used pi's narrower argument shapes (e.g., `fork(entry_id)` operating on current session).
+- **E.1** — Generator-through-bridge regression test (sync + async generator paths) delegated to an Opus subagent. Subagent surfaced a behavioral note: `for item in value` discards a generator's `return X`, so the last *yielded* value is both the final `update` and `response.data`.
+
+80 tests pass on both venvs (up from 56).
+
+### Batch 2 — `d90d626` — validation tightening
+
+6 items, all in `agent_class.py` / `hook_surface.py` / `agent.py`:
+
+- **A.3 / F10** — Keyword-only `ctx` passed by keyword. Refactored `_handler_wants_context` → `_handler_ctx_mode` that returns `(wants_context, kw_name)`. Dispatcher uses `**{kw_name: ctx}` when keyword-only ctx detected.
+- **F11** — `_decision_timeouts_ms` default is `MappingProxyType({})`. Mutation now raises; subclasses must reassign.
+- **F12** — `Agent.__init__` raises on owned-kwarg overlap. New `_AGENT_OWNED_KWARGS` frozenset.
+- **F22** — Sync notification hook returning awaitable now raises (parity with the existing decision-hook check).
+- **F23** — Strict-int timeout validation via new `_is_positive_int` helper (rejects `True`, `0.5`, etc.).
+- **F25** — `PiAgentHarness.__init__` validates constructor-passed `decision_timeouts_ms` via new module-level `validate_decision_timeouts_mapping` helper.
+
+102 tests pass on both venvs.
+
+### Batch 3 — `13dd691` — wire/protocol bug fixes
+
+6 items, split across `rpc.py` / `agent_class.py` / `shim.py` (shim items delegated to an Opus subagent):
+
+- **F19** — `_decision_timeouts_for_manifest` filters to open gates only. Closed-gate timeouts no longer ship in the manifest.
+- **F24** — Failed `start()` nulls `self.process` so retry works. The error-message line had to read `self.process.returncode` BEFORE the cleanup helper nulls it. F7 cherry-pick regression test updated.
+- **F33** — `close()` unblocks `next_event()` / `wait_for_event()` waiters via new `_close_event: asyncio.Event`. `next_event` races queue.get() against close_event via `asyncio.wait`.
+- **F34** — Duplicate request IDs rejected. `send()` checks `_pending` membership before insert.
+- **A.2 / F27** — `DECISION_EVENTS` TS array generated from Python's `_DECISION_EVENT_NAMES` via new `__DECISION_EVENTS__` placeholder + `_render_decision_events_ts_array` helper. Single source of truth.
+- **F36** — `shim.py`'s `bridgeCall` / `bridgeNotify` dict-merge order swapped to `{ ...payload, id, type, token }` so framework keys win. Mirror of the Phase 5.5 `rpc.py:411` fix on the TS side.
+
+113 tests pass on both venvs.
+
+### Batch 4a — `67eea24` — threading-model small fixes
+
+4 items (the small/non-design subset of the threading cluster):
+
+- **F9** — `close()` / `submit()` race fixed via new `_close_lock`. submit() holds the lock for check-and-put; close() for set-and-put. Either submit lands first or sees `_closed = True` and raises — never queued behind `_STOP`.
+- **F13** — `watch_disconnect` distinguishes EOF/error from parent-cancellation. Only EOF/error sets `cancelled`; parent-cancel re-raises `asyncio.CancelledError`. Both `watch_disconnect` sites fixed.
+- **F15** — `close()` gather bounded by `asyncio.wait_for(timeout=2.0)`. Defense in depth on top of F3/F4's CancelledError-must-re-raise contract.
+- **F16** — `ProcessLookupError` suppressed around SIGTERM / SIGKILL calls so cleanup always reaches the end.
+
+117 tests pass on both venvs.
+
+### Remaining for the council (F8 + F14)
+
+Both items have explicit design implications that benefit from the 4-LLM council pattern:
+
+- **F8** — Shared `hook_executor` `max_workers=1` serializes HITL across harnesses. Design space: (a) per-Agent pool, (b) bump shared `max_workers`, (c) document the contention and recommend `async_decide_<event>` for HITL. 3-reviewer agreement at Gate A.5; needs an opinion call.
+- **F14** — Reader-task death doesn't terminate pi subprocess. Now narrowed (F3/F4 handle the most common exception paths), but a non-trivial death (decoder error, asyncio bug) still leaves pi alive. Design space: (a) conservative — `_fail_pending` and raise on next `send`, (b) aggressive — kill pi via `_cleanup_after_startup_failure`-style path. No reviewer found a one-line fix; the design question is the real work.
+
+Both items stay in the deferred-items doc's "Fix now" bucket with the "needs the council" note.
+
+### Sprint-close test surface
+
+- 117 unit tests pass on `local.venv` (3.11) and `local-ft.venv` (3.14t).
+- 2 live tests still pass.
+- 1 skipped (`test_pi_event_taxonomy`; pi-mono source not linked).
+- `make all` clean. `make lint-md` clean on 27+ markdown files.
+
+### Subagent delegation notes
+
+Three Opus subagents ran in worktrees during this sprint: D.2 (session wrappers), E.1 (generator test), and the A.2+F36 shim work. Useful observations:
+
+- The worktree isolation seems to have been imperfect for D.2's case — its edits appeared in the main checkout's working tree. E.1's edits stayed in its worktree (the cleaner case). The harness may have a subtle bug or the isolation depends on workflow specifics; flagging here so a future session knows to watch for it.
+- Both delegated tasks completed cleanly with `make all` green in their respective working areas. The subagents' choice to check pi-mono source (D.2) for the canonical signatures was the right move — my prompt's suggested signatures were wrong.
+
+### What stays open going forward
+
+- F8 and F14 (council needed).
+- The 10 strong remain-deferred items (rationales in the deferred-items doc).
+- The roadmap bridges (command / state / UI — Category F).
+
+The deferred-items doc is the canonical rollup; a future session reading SESSION-STATE.md should follow the pointer to it before deciding what to tackle.

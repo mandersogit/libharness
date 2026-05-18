@@ -11,15 +11,15 @@ Working-memory snapshot for the executing Claude session. **Refreshed frequently
 
 ## Current state
 
-**Phase:** SPRINT COMPLETE. All 16 work tasks + all 15 journal tasks done. Gate C green: 56 unit + 2 live tests on both venvs; 27 md files lint-clean. 17 commits since `main`.
+**Phase:** v8 port SPRINT COMPLETE + 4-batch ergonomic pass DONE. 25 of 28 fix-now items landed across batches 1-4a (commits `02cc67a` / `d90d626` / `13dd691` / `67eea24`). 2 items remain (F8, F14) — both design calls; need the 4-LLM council in a future session. 117 unit + 2 live tests on both venvs. 22+ commits since `main`.
 
-**Branch:** `asyncio-in-thread`. Ready for final-diff review and merge.
+**Branch:** `asyncio-in-thread`. Ready for final-diff review and merge of everything except F8/F14 (which can be a follow-up).
 
-**Working tree:** uncommitted: updated journal + handoff with Gate C entry, plus the small MD040 fix in `dev-notes/2026-05-14-pi-internals-notes.md`. About to commit as the Gate C docs snapshot.
+**Working tree:** uncommitted: updated journal (ergonomic-pass section) + this handoff. About to commit as the final ergonomic-pass docs snapshot.
 
-**Pi source state under `src/libharness/pi/`:** events.py + hook_surface.py + agent_class.py three-file layout. AgentHookSurface mixin with 112 ClassVars + 3 _validate_\* classmethods + `_assert_declarations_match_event_sets()` invariant guard at module bottom. Agent class with dispatchers + lifecycle + manifest-wiring classmethods. Existing v8 source (rpc.py, server.py, shim.py, etc.) carries the three Phase-5.5 bugs to fix next.
+**Pi source state under `src/libharness/pi/`:** Post-ergonomic-pass. AgentHookSurface mixin with 112 ClassVars, MappingProxyType timeouts default, strict-int validation, owned-kwargs guard. Agent class with dispatchers (kw-aware ctx mode), sync-hook awaitable check, manifest filtered to open gates only. PiAgentHarness with \_owner_start_lock + \_close_lock. PiRpcClient with \_close_event for next_event unblocking, retry-after-failure support, duplicate-id rejection, bounded close gather, PLE-suppressed SIGTERM block. Shim with Python-generated DECISION_EVENTS array and framework-keys-win dict-merge order.
 
-**Next concrete action:** commit the Gate C docs snapshot (journal + handoff + pi-internals MD040 fix). Then hand off to user for final-diff review and merge.
+**Next concrete action:** commit the ergonomic-pass docs snapshot. Then hand off to user for final-diff review and merge. F8 + F14 stay as the open work for the next session's 4-LLM council.
 
 ## Permissions and operating mode
 

@@ -1,0 +1,41 @@
+repo: .
+
+commits:
+  - message: |
+      docs: ergonomic-pass session close — journal + handoff snapshot
+
+      Closes out the post-Gate-C ergonomic-pass sprint. 25 of 28 fix-now
+      items landed across four batches (commits `02cc67a` / `d90d626` /
+      `13dd691` / `67eea24`). F8 and F14 stay open — both are genuine
+      design calls that benefit from running the 4-LLM council in a
+      future session.
+
+      Final state:
+
+        - 117 unit tests + 2 live tests pass on `local.venv` (3.11) and
+          `local-ft.venv` (3.14t).
+        - `make all` and `make test-live` clean.
+        - 27+ markdown files lint-clean.
+
+      ## journal update
+
+      `dev-notes/2026-05-17-v8-port-journal.md` gains a § Post-Gate-C:
+      ergonomic-pass sprint section covering all four batches with the
+      per-item summary and the remaining-work pointer to F8/F14. The
+      subagent-delegation notes at the bottom record the observation
+      that worktree isolation seems imperfect in this harness (D.2's
+      edits appeared in the main checkout while E.1's stayed in its
+      worktree), so future sessions know to watch for it.
+
+      ## handoff update
+
+      `dev-notes/2026-05-17-v8-port-handoff.md` "Current state" updated
+      to reflect the post-ergonomic-pass position. A future session
+      reading the handoff first sees the 25-of-28 status, the F8/F14
+      council ask, and the actual code state across all touched files.
+
+      No source/test changes in this commit — it's a docs-only snapshot.
+    files:
+      - dev-notes/2026-05-17-v8-port-journal.md
+      - dev-notes/2026-05-17-v8-port-handoff.md
+      - dev-notes/commit-plans/2026-05-17-ergonomic-pass-docs-snapshot.yaml
