@@ -1,0 +1,56 @@
+repo: .
+
+commits:
+  - message: |
+      docs(session-state): reflect post-v8-port state
+
+      Phase 9 of the v8 port plan. Final docs update.
+
+      ## dev-notes/SESSION-STATE.md
+
+      Rewritten to reflect the post-port state:
+
+        - § Current state: drops the "direction shift in progress"
+          framing. Replaces with the post-port inventory: 3-file split
+          (`events.py` + `hook_surface.py` + `agent_class.py`) plus the
+          rest of `src/libharness/pi/`; 56 unit + 2 live tests pass on
+          both venvs; docs/DESIGN.md updated with the asyncio-in-thread
+          architecture; AGENT_HOOKS.md ported; three superseded design
+          docs carry top-of-doc notes.
+        - § Pending tasks: removes the "Port v8" entry (now done).
+          Adds the Tier-2 ergonomic-pass backlog from the Gate A.5
+          synthesis doc, the deferred Item E (`subscribe_client_events`
+          thread-bounce simplification), and the still-relevant
+          pi-native session method wrappers + generator-through-bridge
+          regression test + the three roadmap bridges.
+        - § Recent activity: replaces the pre-port commit list with
+          the 13 commits from the v8 port sprint (newest first), each
+          with its phase identifier. Confirms make all + make test-live
+          green through Gate B.
+        - § Notes for the next session: drops the two-branch-awareness
+          paragraph (one direction landed); drops the "port hasn't
+          happened on this branch" warning (it has); adds pointers to
+          the v8 port journal (running log) and handoff (volatile
+          snapshot) for context-recovery; preserves the venv / commit-
+          plans / markdown-workflow operational notes.
+
+      ## dev-notes/2026-05-17-v8-port-plan.md
+
+      Status: `Ready for implementation` → `Implemented`. Body
+      preserved as the historical audit trail of how the sprint was
+      planned. The journal (`dev-notes/2026-05-17-v8-port-journal.md`)
+      is the canonical record of what actually happened.
+
+      ## Acceptance
+
+        - `make lint-md` green on both docs.
+        - `make all` + `make test-live` still green on both venvs (no
+          source changes; sanity confirmed at Phase 9 close).
+
+      Gate C (final verification) follows in the next commit, which
+      bundles a final docs snapshot (journal/handoff updated to the
+      post-Phase-9 state) and the closing acceptance run.
+    files:
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/2026-05-17-v8-port-plan.md
+      - dev-notes/commit-plans/2026-05-17-phase-9-session-state.yaml

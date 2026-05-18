@@ -47,73 +47,52 @@ The library predecessor reviews in `dev-notes/2026-05-14-pi-python-harness-*-rev
 
 ## Current state
 
-- v5 baseline ported into `src/libharness/pi/` (unchanged on this branch). `set_model` bug fixed with regression test; manifest `protocolVersion=1` handshake added; `docs/DESIGN.md` written; resolved decisions captured (TCP-not-UDS, use pi-native sessions, concurrency-model — see below).
-- **Direction shift in progress (2026-05-17):** the 2026-05-15 concurrency-model decision (primarily D = threads end-to-end) is being superseded in favor of the v6/v7/v8 asyncio-in-thread + Agent class with opt-in participation direction. Decision register in `docs/DESIGN.md` not yet updated (it gets updated when the port lands).
-  - **v6** explored extracting asyncio I/O into a dedicated thread with a sync caller facade (`PiAgentHarness` proxy). Vendored at `dev-notes/predecessors/v6-threaded/`.
-  - **v7** added the Agent class with notification hooks (`on_X` / `async_on_X`) for 10 core events. Vendored at `dev-notes/predecessors/v7-threaded-agent-hooks/`.
-  - **v8** added decision hooks (`decide_X` / `async_decide_X`) for 19 participation events via the always-notify + gated-decide architecture. Vendored at `dev-notes/predecessors/v8-decision-hooks/`. **This is the baseline we're adopting.**
-- **Dual-venv scaffold for 3.11 + 3.14t still in place.** `local.venv/` is 3.11 standard; `local-ft.venv/` is 3.14t freethreading. The FT verification motivation softened under the v8 direction (the asyncio core stays on one loop thread, so FT only buys parallelism for the tool pool), but the dual-venv setup carries no real cost; keep it.
-- 7 unit tests + 1 set_model regression pass on both venvs. 2 live tests via `make test-live`. `make all` clean. Markdown toolchain wired (mdformat + markdownlint-cli2).
-- OAuth credential at `.sandbox/pi-home/.pi/agent/auth.json` (untracked). `make login` bootstraps from scratch.
+- **v8 ported into `src/libharness/pi/` (2026-05-17).** Source is `events.py` + `hook_surface.py` + `agent_class.py` (3-file split) + `agent.py` (PiAgentHarness proxy) + `runtime.py` (HarnessRuntime, AsyncioLoopThread) + the existing `rpc.py` + `server.py` + `shim.py` + `tools.py` + `jsonl.py` + `harness.py` + `cli.py`. The `Agent` class is a subclassable surface with 112 hook ClassVars across four flavors (on / async_on / decide / async_decide); the `AgentHookSurface` mixin holds the declarative surface and validation; an import-time consistency-check guard pins the invariant that the ClassVars match the event frozensets.
+- **Architecture:** asyncio core preserved but running in a dedicated thread (`HarnessRuntime`'s `AsyncioLoopThread`). Each `PiAgentHarness` has its own owner thread. Shared tool executor + dedicated single-worker hook executor. The application main thread stays the application's.
+- **Tests:** 56 unit tests + 2 live tests pass on both venvs. `make all` and `make test-live` clean. Test coverage: hooks dispatch (test_agent_class.py — including 3 strict-mode E2E tests for decision events from Item C), decision hooks (test_decision_hooks.py), channel separation (test_channel_separation.py), pi event taxonomy (test_pi_event_taxonomy.py — skips when pi-mono unavailable), threading model (test_threaded_agent.py), v5 regression (test_set_model.py, test_server.py, etc.), Phase 5.5 cherry-picks (test_v8_cherrypick_fixes.py — 6 cases), Gate A.5 Tier-1 fixes (test_gate_a5_tier1_fixes.py — 12 cases).
+- **Docs:** `docs/DESIGN.md` updated with the asyncio-in-thread architecture, threading-model paragraph, Agent-class paragraph, and 5 new 2026-05-17 resolved-decision rows (concurrency, hook surface layout, decision-hook return shape, cancellation API, timeout config). `docs/AGENT_HOOKS.md` ported from v8 with per-event return-shape table. Three superseded design docs (threads-rewrite plan, concurrency-model discussion, event-bridge proposal) carry top-of-doc notes pointing readers at the v8 docs.
+- **Dual-venv scaffold for 3.11 + 3.14t in place.** `local.venv/` (3.11) and `local-ft.venv/` (3.14t). Both build clean; both run the full suite. The FT verification motivation softened (asyncio core stays on one loop thread, so FT mostly only buys parallelism for the tool pool), but the dual-venv setup carries no real cost.
+- **OAuth credential** at `.sandbox/pi-home/.pi/agent/auth.json` (untracked; refresh-token backed). `make login` bootstraps from scratch.
 
-## Direction shift summary (2026-05-17)
+## Pending tasks (post-port)
 
-For full detail, see `dev-notes/2026-05-17-v8-analysis.md`. Brief:
+Sorted by readiness.
 
-- **Architecture:** keep v6's `HarnessRuntime` + dedicated asyncio loop thread + thread-owned `PiAgentHarness` proxy + shared tool executor. Layer `Agent` (v7) with notification hooks + (v8) decision hooks on top.
-- **Notification hooks:** `on_X` / `async_on_X` for 37 events total (18 RPC notification + 19 decision-event observation slots). Sync handlers run on a dedicated hook executor (`max_workers=1`); async handlers run on the loop thread. Return-less; pi doesn't wait.
-- **Decision hooks:** `decide_X` / `async_decide_X` for 19 participation events. Sync round-trip — pi blocks until Python returns. Opt-in: defining the method opens the gate at extension load.
-- **Gate model:** the TS shim subscribes to every participation event up front. Per fire, the handler picks `notify_event` (fire-and-forget, gate closed) or `event` (sync round-trip, gate open). One bridge call per fire either way.
-- **Resolved (author, 2026-05-17):** decision-hook naming = `decide_X` + `async_decide_X` (symmetric); opt-in trigger = method existence; result shape = raw dict; cancellation = `HookContext` with cooperative `cancelled` polling; timeout = no default + opt-in mechanism; channel separation = decision events visible only via Agent hooks, not via `client.on_event`; mixin layout = `AgentHookSurface` (public, no leading underscore); file layout for port = 3 files (`events.py`, `hook_surface.py`, `agent_class.py`).
-- **Deferred:** runtime opt-in (`agent.enable_decision` / `disable_decision`); TypedDicts per decision event for return-shape safety; pi-native session method wrappers; other bridges.
-
-## Pending tasks
-
-Reshuffled for the new direction. Top item is the port itself, queued for the spark environment.
-
-- **Port v8 into `src/libharness/pi/` (executes in spark, not this checkout).** See `dev-notes/2026-05-17-v8-analysis.md` § Recommendation for the libharness port for the full sequence. Headlines:
-  - Vendor v8 source → rename `pi_python_harness` → `libharness.pi`.
-  - Apply mixin refinement (extract `AgentHookSurface` per the author's `agent_class_mca.py`).
-  - Close the 38-declaration gap (add `on_X` / `async_on_X` for the 19 decision events).
-  - Split into 3 files: `events.py` + `hook_surface.py` + `agent_class.py`.
-  - Add the consistency-check helper (validates declarations match the event sets).
-  - Address items C (strict-mode end-to-end test) and E (`subscribe_client_events` thread-bounce simplification). Defer items A, B, D, F.
-  - Update `docs/DESIGN.md` § Resolved decisions: supersede 2026-05-15 concurrency row; add 2026-05-17 row(s) for asyncio-in-thread + Agent class + opt-in participation.
-  - Mark `dev-notes/2026-05-15-threads-rewrite-plan.md` status as Superseded (preserve body).
-  - Update this SESSION-STATE.md to reflect the post-port state.
-  - Run `make all` + `make test-live` on both venvs.
-  - The spark environment has a ready-to-use codex-cli adversarial review skill that's the right tool for the implementation pass.
-- **Pi-native session method wrappers** (deferred from earlier sessions): `fork`, `clone`, `switch_session`, `get_session_stats`, `export_html`, `set_session_name`, `get_fork_messages` as typed methods on `PiRpcClient`. ~100-150 LOC. Independent of the v8 port; can happen in either branch.
-- **Command bridge, state bridge, UI bridge** (after participation lands; see `docs/DESIGN.md` Roadmap).
+- **Tier-2 ergonomic pass** (the deferred-from-Gate-A.5 findings). 22 items in `dev-notes/2026-05-17-v8-port-review-synthesis.md` Tier-2 section; most are MODERATE/MINOR with mitigations or no current load-bearing impact. Highlights: shared `hook_executor` contention (F8), `_call`/close race (F9), `_decision_timeouts_ms` mutable class default (F11), `_handler_wants_context` keyword-only edge case (F10 / Item D). No single-commit fix; revisit when an actual incident motivates the work.
+- **Pi-native session method wrappers** (carried forward from earlier sessions): `fork`, `clone`, `switch_session`, `get_session_stats`, `export_html`, `set_session_name`, `get_fork_messages` as typed methods on `PiRpcClient`. ~100-150 LOC. Independent of any v8 work.
+- **Item E — `subscribe_client_events` thread-bounce simplification.** Deferred during Phase 6 (advisor doc rated it "low value too. Defer if it's contentious."). Two thread hops to a list append. Land in the ergonomic pass if you want to clean up the path.
+- **Generator-through-bridge regression test.** Sync-generator handlers yielding multiple `update` frames are supported in `tools.py:collect_tool_result` but not test-covered end-to-end. v8 preserves the path; the gap survives the port.
+- **Command bridge, state bridge, UI bridge** (Roadmap items in `docs/DESIGN.md`; future work).
 
 ## Recent activity
 
-Commits, newest first:
+Commits added during the v8 port sprint (2026-05-17), newest first:
 
-- `79aa613` — build: dual-venv scaffold + docs: concurrency-model decision.
-- `12aaf7b` — docs: vendor v1–v5 predecessors + sweep ~/Downloads citations.
-- `ad687a1` — docs: concurrency-model discussion + fresh-session handoff.
-- `7f9c54e` — docs: pi internals notes + record session-model intent.
-- `b4d2ccd` — feat(pi): manifest `protocolVersion` + shim handshake (P2).
-- `0058390` — fix(pi): `set_model` wire shape `model` → `modelId` (P1).
-- `ff498a2` — test(pi): real-LLM live test (P2).
-- `eae9f67` — docs: session state + commit plan for v5 port.
-- `7d0d125` — feat(pi): port v5 source as `libharness.pi` subpackage.
-- `864a60b` — chore: initial scaffold.
+- `a0aa043` — docs: mark threads-rewrite + concurrency-model docs superseded; close event-bridge proposal (Phase 8).
+- `8dcf6cc` — docs: update DESIGN.md for asyncio-in-thread + Agent class; port AGENT_HOOKS.md (Phase 7).
+- `90e93a9` — test(pi): port v8 test suite + strict-mode E2E for decision events (Phase 6 + Item C).
+- `4b82fe7` — docs: Gate A.5 review synthesis + journal/handoff snapshot.
+- `4d0bee1` — fix(pi): apply Gate A.5 Tier-1 findings (7 HIGH; F1-F7 + F20).
+- `de0fe82` — fix(pi): cherry-pick three v8 bugs surfaced in threads-rewrite review (Phase 5.5).
+- `e62b085` — docs: v8 port sprint scaffolding + Gate A snapshot.
+- `4c1a615` — feat(pi): assert hook-surface declarations match event sets at import time (Phase 5).
+- `5928508` — refactor(pi): split agent_class.py into events / hook_surface / agent_class (Phase 4).
+- `3aada26` — feat(pi): declare observation hooks for decision events (Phase 3).
+- `9945438` — refactor(pi): extract AgentHookSurface mixin from Agent class (Phase 2).
+- `9a57b99` — feat(pi): vendor v8 source as libharness.pi (Phase 1).
+- `71eadae` — fix(setup): pin nodeenv as explicit dev dep + point NODEENV_PYTHON at $VENV.
 
-Plus content/format cleanup commits between these by the author.
+Plus a Phase 9 commit (this SESSION-STATE update) and a Gate C snapshot to follow.
 
-`make test-live` validated on both venvs after `79aa613`: real pi + real LLM (gpt-5.5 via ChatGPT OAuth) green on 3.11 and 3.14t.
+`make all` + `make test-live` validated on both venvs through Gate B (commit `90e93a9`).
 
 ## Notes for the next session
 
-- **Branch awareness:** the 2026-05-15 concurrency decision (option D, threads end-to-end) was the original direction. The 2026-05-17 session shifted toward the v8 asyncio-in-thread direction. The two branches (this one = `asyncio-in-thread`; spark's = `threads-rewrite`) both exist; the final adoption call lives in whichever branch's port lands first. If you arrive on `asyncio-in-thread`, the design is locked toward v8 (see § Direction shift summary); the port itself is queued for the spark environment.
-- **Don't assume the port has happened on this branch.** `src/libharness/pi/` is still the v5 baseline. The v6/v7/v8 code lives only in `dev-notes/predecessors/v*/`. Until the port lands, the running code IS still v5-port-asyncio.
-- **Concurrency decision in `docs/DESIGN.md` is stale-but-still-current-truth.** The 2026-05-15 row reads "Resolved" because that's what the code currently reflects. The supersession (2026-05-17 row) lands during the port, not before.
+- **Port is complete on this branch.** `src/libharness/pi/` reflects the v8 baseline with the three Phase 5.5 cherry-picks and seven Gate A.5 Tier-1 fixes applied. The architecture is in `docs/DESIGN.md`; the hook surface in `docs/AGENT_HOOKS.md`. The full sprint audit trail is in `dev-notes/2026-05-17-v8-port-journal.md` (running log) and `dev-notes/2026-05-17-v8-port-handoff.md` (volatile state snapshot).
+- **The threads-rewrite branch (`origin/threads-rewrite`)** is preserved for audit but superseded. Three commits there are not adopted. The supersede notes at the top of `dev-notes/2026-05-15-threads-rewrite-plan.md` and `dev-notes/2026-05-15-concurrency-model-discussion.md` explain the direction shift.
 - **Never activate a venv.** Always invoke interpreter/tool binaries by absolute path. Make targets do this for you.
 - Per `CLAUDE.md`: all commits go through the commit-plans skill. Read-only git is fine.
-- Per the project's markdown workflow (`feedback_markdown_workflow` memory): after editing any `.md`, run `./local.venv/bin/python -m mdformat --wrap keep <FILE>` then `/opt/miniforge/envs/dev-tools/bin/node /opt/miniforge/envs/dev-tools/bin/markdownlint-cli2 <FILE>` and `make lint-md-tables`. Table rows ≤150 cols. Sidecar pattern for overflow (never drop tables).
+- Per the project's markdown workflow: after editing any `.md`, run `./local.venv/bin/python -m mdformat --wrap keep <FILE>` then `/opt/miniforge/envs/dev-tools/bin/node /opt/miniforge/envs/dev-tools/bin/markdownlint-cli2 <FILE>` and `make lint-md-tables`. Table rows ≤150 cols. Sidecar pattern for overflow (never drop tables).
 - The model selection in `test_real_llm.py` is implicit (pi reads the default from `.sandbox/pi-home/.pi/agent/settings.json`). For determinism across contributor environments, pin via `PiLaunchConfig(provider=..., model=...)`. Not urgent.
-- One v3 idea we did *not* port: handlers that are sync generators yielding multiple `update` frames are supported in `tools.py:collect_tool_result`, but there's no test that exercises a generator end-to-end through the bridge. Worth a regression test before we rely on it. The v8 architecture preserves the existing `collect_tool_result` shape (asyncio internals stay), so this code path survives — the regression-test gap is still real.
-- The v1–v5 proof-of-concept iterations are vendored at `dev-notes/predecessors/v*/` (source + design docs). The original `~/Downloads/pi_python_harness/` working folder is no longer required and can be deleted; everything we cite lives in-tree (`dev-notes/predecessors/`) or via `links/pi/` (the pi source checkout at `~/git/external/pi/`).
-- For a fresh session resumed from this state: ground every recommendation in the relevant dev-notes doc and `docs/DESIGN.md`, not in your training-time priors about asyncio vs threads. The concurrency model is settled (threads + FT-first); don't relitigate.
+- The v1–v5 proof-of-concept iterations are vendored at `dev-notes/predecessors/v*/` (source + design docs). Original `~/Downloads/pi_python_harness/` working folder no longer required and can be deleted; everything we cite lives in-tree.
+- For a fresh session resumed from this state: ground every recommendation in `docs/DESIGN.md`, `docs/AGENT_HOOKS.md`, and the v8 port journal. The architecture is settled (asyncio-in-thread + Agent class + opt-in participation); don't relitigate.
