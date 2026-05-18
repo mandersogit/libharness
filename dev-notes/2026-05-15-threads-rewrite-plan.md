@@ -1,9 +1,15 @@
 ---
-status: Ready for implementation
+status: Superseded
 created: '2026-05-15'
 ---
 
 # asyncio → threads rewrite plan
+
+> **Superseded 2026-05-17 by `dev-notes/2026-05-17-v8-port-plan.md`.**
+>
+> The threads-rewrite direction described here was implemented as far as phase 3 on the `threads-rewrite` branch (`origin/threads-rewrite`, also available in sibling checkout `../libharness/`); during implementation, doubts surfaced about the rip-asyncio-out approach — thread inventory ballooned, lock-order complexity grew, and the sync-callback ergonomics for user code felt worse than the alternative. The v8 direction (asyncio core preserved, `Agent` class with notification + decision hooks layered on top) is the new canonical direction.
+>
+> Body preserved for audit trail. See `dev-notes/2026-05-17-v6-as-base-direction.md` for the direction-shift discussion and `dev-notes/2026-05-17-v8-analysis.md` for the v8 design rationale.
 
 Implementation plan for rewriting `src/libharness/pi/` from asyncio to threads, per the concurrency-model decision recorded 2026-05-15 (`dev-notes/2026-05-15-concurrency-model-discussion.md` § Resolution). The decision is locked; this document is the *how*, not the *whether*.
 

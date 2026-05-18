@@ -1,0 +1,52 @@
+repo: .
+
+commits:
+  - message: |
+      docs: mark threads-rewrite + concurrency-model docs superseded; close event-bridge proposal
+
+      Phase 8 of the v8 port plan. Adds supersede / closed notes to the
+      three dev-notes docs whose decisions were overtaken by the
+      v8 direction shift. Body of each doc is preserved for audit trail.
+
+      ## dev-notes/2026-05-15-threads-rewrite-plan.md
+
+      Status: `Ready for implementation` → `Superseded`. Top-of-doc
+      blockquote explains: the threads-rewrite direction was implemented
+      as far as phase 3 on `origin/threads-rewrite`; during
+      implementation, doubts surfaced about the rip-asyncio-out
+      approach (thread inventory ballooning, lock-order complexity,
+      sync-callback ergonomics). The v8 direction (asyncio core
+      preserved, Agent class with hooks layered on top) is the new
+      canonical direction. Pointers to
+      `dev-notes/2026-05-17-v6-as-base-direction.md` and
+      `dev-notes/2026-05-17-v8-analysis.md`.
+
+      ## dev-notes/2026-05-15-concurrency-model-discussion.md
+
+      Status: `Resolved` → `Superseded`. Top-of-doc blockquote explains
+      the 2026-05-15 Decision D (threads end-to-end, freethreading-
+      first) was overtaken by the v8 port. The 2026-05-15 resolution
+      body remains intact below the note.
+
+      ## dev-notes/2026-05-14-event-bridge-proposal.md
+
+      Status: `In co-design` → `Closed (resolved by v8)`. Top-of-doc
+      blockquote explains: the proposal framed the event-bridge design
+      space; v8's gated-decide protocol (subscribe-to-all + always-
+      notify + per-event gate; method existence opens the gate) is the
+      implemented answer. Pointers to `docs/DESIGN.md` § Architecture,
+      `docs/AGENT_HOOKS.md`, and `dev-notes/2026-05-17-v8-analysis.md`.
+
+      ## Acceptance
+
+        - `grep -l "^status: Ready for implementation" dev-notes/
+          2026-05-1[45]-*.md` returns no matches.
+        - `make lint-md` green on all three docs (MD025 multi-H1 was a
+          transient issue from an earlier draft; fixed by keeping a
+          single H1 and putting the supersede blockquote between H1 and
+          body).
+    files:
+      - dev-notes/2026-05-15-threads-rewrite-plan.md
+      - dev-notes/2026-05-15-concurrency-model-discussion.md
+      - dev-notes/2026-05-14-event-bridge-proposal.md
+      - dev-notes/commit-plans/2026-05-17-phase-8-supersede-notes.yaml

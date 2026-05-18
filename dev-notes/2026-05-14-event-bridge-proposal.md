@@ -1,9 +1,13 @@
 ---
-status: In co-design
+status: Closed (resolved by v8)
 created: '2026-05-14'
 ---
 
 # Event bridge proposal
+
+> **Closed 2026-05-17 — resolved by the v8 port.** This proposal framed the design space for an event bridge between pi extensions and Python handlers. The v8 architecture answers the underlying question with its gated-decide protocol (subscribe-to-all + always-notify + per-event gate for sync round-trip; method existence opens the gate). The implemented protocol is documented at `docs/DESIGN.md` § Architecture and `docs/AGENT_HOOKS.md`; the design rationale is in `dev-notes/2026-05-17-v8-analysis.md`.
+>
+> Body preserved for audit trail.
 
 **This is a proposal for discussion, not a design. No decisions inside.** The goal is to frame the design space well enough that the author can make decisions about scope, protocol shape, and priorities. Implementation is gated on author sign-off on §"Decision points" at the end.
 

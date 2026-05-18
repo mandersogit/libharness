@@ -1,9 +1,13 @@
 ---
-status: Resolved
+status: Superseded
 created: '2026-05-15'
 ---
 
 # Concurrency model: asyncio vs threads (with freethreading consideration)
+
+> **Superseded 2026-05-17.** The 2026-05-15 resolution below (Decision **D** — threads end-to-end, freethreading-first) was overtaken when implementation of the threads-rewrite plan (`dev-notes/2026-05-15-threads-rewrite-plan.md`, also superseded) surfaced doubts about the rip-asyncio-out approach: thread inventory growth, lock-order complexity, sync-callback ergonomics. The v8 direction (asyncio core preserved in a dedicated thread, `Agent` class with notification + decision hooks layered on top) is now canonical.
+>
+> See `dev-notes/2026-05-17-v6-as-base-direction.md` for the direction-shift discussion, `dev-notes/2026-05-17-v8-analysis.md` for the v8 design rationale, and `docs/DESIGN.md` § Resolved decisions for the post-port architecture.
 
 ## Resolution (2026-05-15)
 
