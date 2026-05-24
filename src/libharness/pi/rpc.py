@@ -42,7 +42,20 @@ class PiRpcProcessError(RuntimeError):
 class PiLaunchConfig:
     """Launch settings for a Pi RPC subprocess."""
 
-    pi_command: str | Sequence[str] = "pi"
+    pi_command: str | Sequence[str] | None = None
+    """Which pi to invoke.
+
+    When ``None`` (the default), the harness resolves the pi binary at
+    launch time via ``libharness._pi_vendor.resolve_pi_command()``:
+
+    1. (this field, if explicitly set) — caller-supplied takes precedence
+    2. ``LIBHARNESS_PI_PATH`` env var
+    3. Vendored binary at ``<package>/_vendor/pi/pi``
+    4. Raise ``PiRpcError`` with a diagnostic
+
+    Intentionally no ``$PATH`` fallback. See
+    ``dev-notes/2026-05-24-pi-vendoring-design.md`` for rationale.
+    """
     cwd: str | Path | None = None
     env: Mapping[str, str] | None = None
     provider: str | None = None
@@ -71,7 +84,15 @@ class PiLaunchConfig:
     extra_args: Sequence[str] = field(default_factory=tuple)
 
     def base_argv(self) -> list[str]:
-        if isinstance(self.pi_command, str):
+        if self.pi_command is None:
+            # Defer to the resolver: env override > vendored binary > fail loud.
+            # Import locally to keep the rpc module decoupled from packaging
+            # helpers at import time. PiVendorError extends RuntimeError and
+            # carries an actionable diagnostic; let it propagate.
+            from .._pi_vendor import resolve_pi_command
+
+            argv = resolve_pi_command()
+        elif isinstance(self.pi_command, str):
             argv = [self.pi_command]
         else:
             argv = list(self.pi_command)

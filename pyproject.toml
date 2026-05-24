@@ -59,7 +59,12 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-libharness = ["py.typed"]
+# Include the vendored pi tree if present. Files inside `_vendor/pi/` are
+# created by `setup.py`'s BuildPyWithPi hook (during sdist install or
+# wheel build); the glob captures them so they end up inside the built
+# wheel. When LIBHARNESS_SKIP_PI_VENDOR=1, the directory is empty and
+# the glob simply matches nothing — install completes binary-less.
+libharness = ["py.typed", "_vendor/pi/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

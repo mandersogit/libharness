@@ -1,4 +1,4 @@
-.PHONY: help install install-311 install-ft install-pi bootstrap login pi smoke-pi \
+.PHONY: help install install-311 install-ft install-pi install-pi-node-deprecated bootstrap login pi smoke-pi \
         test test-311 test-ft test-live test-live-311 test-live-ft \
         lint lint-311 lint-ft lint-fix \
         typecheck typecheck-mypy typecheck-mypy-311 typecheck-mypy-ft \
@@ -58,11 +58,15 @@ help:
 	@echo "    install-311     — create 3.11 venv at local.venv/ and install dev deps"
 	@echo "    install-ft      — create 3.14t freethreaded venv at local-ft.venv/"
 	@echo ""
-	@echo "  Pi sandbox (external tool — Node + pi-coding-agent):"
-	@echo "    install-pi      — install sandboxed Node + pi into .sandbox/"
+	@echo "  Pi runtime (the precompiled binary published by earendil-works):"
+	@echo "    install-pi      — fetch + sha256-verify + extract pi $$($(PY_311) -m libharness._pi_vendor --version 2>/dev/null || echo 0.75.5)"
+	@echo "                      into src/libharness/_vendor/pi/ (the production path)"
 	@echo "    login           — open the sandboxed pi TUI for /login"
-	@echo "    pi              — run the sandboxed pi CLI (passthrough)"
+	@echo "    pi              — run pi via the resolver (vendored / LIBHARNESS_PI_PATH)"
 	@echo "    smoke-pi        — confirm pi RPC mode responds"
+	@echo ""
+	@echo "  Pi (legacy — node-pi via npm; will be removed once binary path is vetted):"
+	@echo "    install-pi-node-deprecated — install sandboxed Node + pi into .sandbox/"
 	@echo ""
 	@echo "  Setup:"
 	@echo "    bootstrap       — install + install-pi"
@@ -107,6 +111,10 @@ install-ft:
 	$(PY_FT) -m pip install -e '.[dev]'
 
 install-pi:
+	@test -x $(PY_311) || { echo "error: $(PY_311) not found — run 'make install' first" >&2; exit 1; }
+	$(PY_311) -m libharness._pi_vendor install
+
+install-pi-node-deprecated:
 	scripts/setup-node.sh
 	scripts/setup-pi.sh
 

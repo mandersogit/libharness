@@ -1,0 +1,218 @@
+repo: .
+
+commits:
+  - message: |
+      docs(pi): port pi-distribution spike — dev-note + regression + gitignore
+
+      A 2026-05-23 spike in the sibling workspace (~/git/github/libharness/,
+      threads-rewrite branch) investigated how to deliver pi to libharness
+      users. The substantive finding — that the precompiled pi binary
+      published by earendil-works (per-platform tarballs on every GitHub
+      release) works as a drop-in for libharness — is branch-independent
+      and ports verbatim. This commit brings the spike artefact + a
+      regression test into the canonical (asyncio-in-thread / v8) workspace.
+
+      ## dev-notes/2026-05-23-deno-as-pi-runtime-spike.md
+
+      Ported from the sibling workspace with a "Workspace port note"
+      header explaining the branch context and two adjustments:
+
+        - **Harness class names.** Historical smokes referenced below
+          used `PiPythonHarness` (async; v8 preserved and still exports).
+          The v8 port added `PiAgentHarness` (sync, thread-owned facade)
+          and the `Agent` subclass that layers hooks on top.
+        - **Artefact paths.** Historical experiments live in the sibling
+          workspace; this workspace re-ran the load-bearing validation
+          in its own `experiments/precompiled-pi-spike/` (gitignored).
+
+      Re-verification under v8 (four corners — faux/live ×
+      `PiAgentHarness`/`Agent`-subclass) passed first try on
+      linux-arm64; the results table is in the "Re-verification under
+      v8" section of the dev-note. See also the (Update 2026-05-24)
+      note appended to the "Recommendations" section indicating the
+      dev loop has since adopted the precompiled binary as default.
+
+      ## tests/pi/test_precompiled_pi_binary.py
+
+      `live`-marked regression that locks in the load-bearing
+      "precompiled binary works as a drop-in" claim. Resolves the pi
+      binary via PI_PRECOMPILED env var (preferred) or, as of the
+      same-day vendoring implementation, the vendored binary at
+      `<package>/_vendor/pi/pi` (automatic).
+
+      ## .gitignore
+
+      Adds two entries:
+
+        - `experiments/` — exploratory scratch directory used by the
+          spike (single-purpose smokes + downloaded binary artefacts).
+        - `src/libharness/_vendor/` — preemptive for the same-day pi
+          vendoring implementation (#2 in this plan), which lands the
+          ~113 MB pi binary into that directory. Bundled here so the
+          vendoring impl commit doesn't need to re-touch this file.
+
+      ## Acceptance
+
+        - mdformat --wrap keep + markdownlint-cli2 clean on the
+          dev-note (verified during port).
+        - Regression test passes on both venvs against the
+          experiments/precompiled-pi-spike/pi/pi binary
+          (0.39s on 3.11; 0.44s on 3.14t).
+    files:
+      - dev-notes/2026-05-23-deno-as-pi-runtime-spike.md
+      - tests/pi/test_precompiled_pi_binary.py
+      - .gitignore
+
+  - message: |
+      feat(pi): vendor precompiled pi binary at install time
+
+      Replaces "find pi on $PATH at runtime" with a vendored-binary
+      distribution path. End-user `pip install libharness` (via sdist)
+      triggers a setup.py hook that downloads + sha256-verifies +
+      extracts the precompiled pi binary from earendil-works's GitHub
+      release into `<site-packages>/libharness/_vendor/pi/`. At launch
+      time, `PiLaunchConfig.pi_command` defaults to a resolver that
+      consults: explicit caller-supplied → `LIBHARNESS_PI_PATH` env →
+      vendored binary → fail loud (intentionally NO $PATH fallback).
+      In the dev loop, `make install-pi` invokes the same fetcher
+      against `src/libharness/_vendor/pi/`; the legacy node-pi setup
+      is preserved at `make install-pi-node-deprecated` and will be
+      removed once the binary path is thoroughly vetted in real use.
+
+      See `dev-notes/2026-05-24-pi-vendoring-design.md` for the full
+      design + open Qs; `dev-notes/2026-05-23-deno-as-pi-runtime-spike.md`
+      for the evidence trail the design rests on.
+
+      ## src/libharness/_pi_vendor.py (new, ~250 LOC)
+
+      Canonical fetch + resolver module, shared between setup.py,
+      `make install-pi`, and `PiLaunchConfig`. Surfaces:
+
+        - `PI_VERSION = "0.75.5"` + per-platform sha256 hash table
+          for the six platforms earendil-works publishes
+          (darwin-arm64/x64, linux-arm64/x64, windows-arm64/x64).
+        - `detect_platform()` → resolves OS+arch to a platform tag;
+          raises `PiVendorError` on unsupported combinations.
+        - `vendored_pi_dir()` / `vendored_pi_binary()` → expected
+          paths inside the package; same path in dev + prod
+          (`src/libharness/_vendor/pi/pi` editable;
+          `site-packages/libharness/_vendor/pi/pi` wheel).
+        - `fetch_and_extract()` → idempotent download +
+          sha256-verify + extract. Honors `LIBHARNESS_PI_FORCE_REFETCH`
+          and `LIBHARNESS_PI_DOWNLOAD_BASE`.
+        - `resolve_pi_command()` → the runtime resolver, with the
+          NO-$PATH-fallback rationale documented inline.
+        - CLI entrypoint: `python -m libharness._pi_vendor
+          [install [--force] | --version | --which]`.
+
+      ## setup.py (new)
+
+      Minimal shim that wires `BuildPyWithPi` into setuptools'
+      cmdclass. The hook fires during wheel build (sdist user-install
+      or cibuildwheel CI), calls `_pi_vendor.fetch_and_extract()`,
+      and `package-data` glob captures the vendored tree into the
+      built wheel. Opt-out: `LIBHARNESS_SKIP_PI_VENDOR=1` produces a
+      binary-less install (resolver then requires explicit pi_command
+      or LIBHARNESS_PI_PATH).
+
+      ## pyproject.toml
+
+      `[tool.setuptools.package-data]` glob `_vendor/pi/**/*` picks
+      up the vendored tree (no-op when the dir is empty after
+      LIBHARNESS_SKIP_PI_VENDOR=1).
+
+      ## src/libharness/pi/rpc.py
+
+      `PiLaunchConfig.pi_command`: default `"pi"` → `None`; type
+      `str | Sequence[str]` → `str | Sequence[str] | None`. When
+      `None`, `base_argv()` defers to
+      `libharness._pi_vendor.resolve_pi_command()`. Explicit string
+      or sequence values are passed through unchanged. Field docstring
+      explains the resolver order and the no-$PATH-fallback policy.
+
+      ## Makefile + scripts
+
+      - `install-pi` (new): `python -m libharness._pi_vendor install`.
+        Guarded by `test -x $(PY_311)` so the failure mode if the
+        venv isn't built is a clear "run 'make install' first".
+      - `install-pi-node-deprecated` (renamed from `install-pi`):
+        legacy node-pi path, preserved for fallback / comparison.
+      - `help` text updated with both targets + a "legacy" subsection.
+      - `scripts/lib/env.sh`: `PI_CLI` prefers vendored pi over
+        node-pi (`$PI_CLI_VENDORED` then `$PI_CLI_NODE`), so
+        `make test`/`make test-live` automatically use the new binary
+        when present, without churning the test runner.
+      - `scripts/README.md`: clarifies that the scripts now drive the
+        legacy node-pi setup; the primary `make install-pi` target
+        uses `_pi_vendor`. The script-to-target table updated to
+        reflect the rename.
+
+      ## tests/pi/test_pi_vendor.py (new, 26 cases)
+
+        - `TestDetectPlatform` (8): linux/darwin/windows × arm64/x64
+          + unsupported OS/arch fail-loud paths.
+        - `TestPlatformHashes` (2): all six platforms present;
+          hashes look like sha256 + asset names match.
+        - `TestVendoredPathHelpers` (4): expected paths inside
+          package; Unix vs Windows `.exe` suffix; default
+          `package_root` resolves relative to the module file.
+        - `TestResolvePiCommand` (6): explicit string wins;
+          explicit sequence wins; env var used when no explicit;
+          vendored used when no explicit + no env; fail-loud
+          diagnostic mentions all three checked paths +
+          remediation hints; **no $PATH fallback even when a fake
+          pi sits on $PATH** (the load-bearing invariant).
+        - `TestPiLaunchConfigDefersToResolver` (4): `None` default
+          invokes resolver; explicit string passes through;
+          explicit sequence passes through; env var works through
+          the full PiLaunchConfig path.
+        - `TestFetchSha256Mismatch` (2): garbage bytes fail loud
+          with "sha256 mismatch"; pre-existing binary is idempotent
+          (no re-download).
+
+      ## dev-notes/2026-05-24-pi-vendoring-design.md (new)
+
+      Status `Implemented (with Q1/Q3/Q4/Q5 deferred)`. Captures the
+      settled decisions (default distribution, future opt-in,
+      runtime resolver, etiquette layer), the closed Q2 (dev-loop
+      symmetry resolved by this commit), and the deferred Q1/Q3/Q4/Q5
+      with what's implemented and what's untested explicitly called
+      out. Cross-references the project memory entries
+      ([[user-npm-avoidance]] / [[project-pi-distribution]]) and the
+      spike evidence trail.
+
+      ## dev-notes/SESSION-STATE.md
+
+      New "Pi distribution path implemented (2026-05-24)" bullet at
+      the top of § Current state, summarising what landed. § Tests
+      count updated (143 unit + 3 live tests pass on both venvs).
+
+      ## Acceptance (validated end-to-end)
+
+        - `make install-pi`: downloads 45 MB tarball, sha256-verifies
+          (`8b5c66fc…f50`), extracts to
+          `src/libharness/_vendor/pi/pi` (~113 MB). Idempotent on
+          re-run.
+        - `python -m libharness._pi_vendor --version` → `0.75.5`
+        - `python -m libharness._pi_vendor --which` →
+          `<repo>/src/libharness/_vendor/pi/pi`
+        - `python -m build --wheel` → 45.7 MB wheel containing 197
+          vendored entries including the 113 MB `pi` executable
+          (confirms the production wheel-build path).
+        - `make all` on both venvs: 143 unit tests pass; lint
+          (ruff) clean; mypy strict clean; pyright clean.
+        - `make test-live` on both venvs: all 3 live tests pass
+          (test_precompiled_pi_binary, test_real_llm,
+          test_real_pi_integration) against the vendored binary.
+    files:
+      - src/libharness/_pi_vendor.py
+      - setup.py
+      - pyproject.toml
+      - src/libharness/pi/rpc.py
+      - Makefile
+      - scripts/README.md
+      - scripts/lib/env.sh
+      - dev-notes/2026-05-24-pi-vendoring-design.md
+      - tests/pi/test_pi_vendor.py
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-24-pi-vendoring.yaml
