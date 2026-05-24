@@ -5,6 +5,16 @@ local-ft.venv/
 # Pi/Node sandbox
 .sandbox/
 
+# Spike / exploratory scratch (e.g. precompiled-pi-spike, deno-pi-spike).
+# Single-purpose smoke scripts + downloaded artefacts that document a
+# dev-note's evidence trail; intentionally not source-of-truth.
+experiments/
+
+# Vendored pi binary — fetched at install time (sdist) or via `make install-pi`
+# (dev loop) into src/libharness/_vendor/pi/. ~113 MB binary; never committed.
+# Same path in dev and prod (site-packages/libharness/_vendor/pi/).
+src/libharness/_vendor/
+
 # External-reference symlinks. `links/` holds per-developer symlinks
 # into nearby checkouts (e.g. `links/pi` → ~/git/external/pi/) used for
 # file:line citations in dev-notes. Each contributor sets these up
