@@ -1,0 +1,178 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): F14 — reader survives per-record decode errors; fail-fast on catastrophic crashes
+
+      Resolves the last "fix now" item from the v8 deferred-items list.
+      The synthesis doc framed F14 as "conservative-fail-pending vs
+      aggressive-kill-pi" — that turned out to be a false dichotomy.
+      The real fix is "don't kill the reader in the first place for the
+      one case where reader-death was wrong" (per-record JSONL decode
+      errors), and only fail-fast for the residual catastrophic cases.
+
+      ## Why the reader was dying (and which cases warrant it)
+
+      Walking the failure modes inside `_read_stdout_loop`:
+
+        - **Pipe broken / OS error** — pi crashed mid-stream. Reader
+          should die; nothing meaningful to recover. Already correctly
+          handled (exception propagates, `finally` fires `_fail_pending`).
+        - **Buffer overflow on garbage** — pi spamming binary with no
+          LFs. Decoder is wedged; reader should die. Correctly handled.
+        - **Per-record JSONL decode error** — pi emits one malformed
+          line. The decoder's state ADVANCES past the bad record before
+          raising, so it's recoverable across calls — but `feed()` was
+          raising and killing the reader, taking down the whole session
+          for one bad message. **This is the case the fix targets.**
+        - **`CancelledError`** — normal close. Propagates through the
+          `finally`. Correctly handled.
+        - **`_handle_message`** exceptions — already caught downstream by
+          F3 (event subscribers) and F4 (UI handlers). Reader stays
+          alive for these.
+
+      So F14 reduces to "make the per-record-decode case not kill the
+      reader, then surface the residual catastrophic cases clearly."
+
+      ## Part A — `StrictJsonlDecoder.feed()` returns `(records, errors)`
+
+      Per-record decode failures are now collected into the returned
+      `errors` list rather than raised. The decoder's internal state
+      already advanced past the bad record (the buffer slice + `del`
+      happens before `json.loads`), so subsequent records are
+      delivered correctly. Buffer-overflow STILL raises — that case is
+      genuinely catastrophic (decoder buffer is wedged).
+
+      Callers update mechanically:
+
+        - `rpc.py:_read_stdout_loop` — unpacks `(records, errors)`,
+          handles each error before iterating records.
+        - `server.py:_serve_client` — checks `errors` for the bridge
+          request path; raises `ToolError` on any decode error (a
+          malformed bridge request is treated like the existing
+          "expected exactly one JSON object" failure).
+
+      ## Part B — Visibility for per-record decode errors
+
+      Per the user's instruction that "the developer absolutely needs
+      to know if something is going wrong," every per-record error is
+      surfaced **three** ways:
+
+      ```python
+      for err in errors:
+          self._jsonl_decode_error_count += 1
+          if self._first_jsonl_decode_error is None:
+              self._first_jsonl_decode_error = str(err)
+          self._last_jsonl_decode_error = str(err)
+          _LOG.error("malformed JSONL from pi (skipped): %s", err)
+          print(f"libharness.pi: malformed JSONL from pi (skipped): {err}",
+                file=sys.stderr, flush=True)
+      ```
+
+        - **Counter on `PiRpcClient`** — `_jsonl_decode_error_count`,
+          `_first_jsonl_decode_error`, `_last_jsonl_decode_error`.
+          Programmatic visibility for monitoring, regression tests,
+          and operator diagnostics.
+        - **Logger at ERROR** — `_LOG.error(...)` via the standard
+          `libharness.pi.rpc` logger. Configurable per app.
+        - **Direct stderr print** — belt-and-braces in case the
+          embedding app silences the logger. Always visible.
+
+      The triple-redundancy is intentional: silent swallow of a pi-side
+      bug is exactly the failure mode we're trying to avoid.
+
+      ## Part C — Fail-fast on residual catastrophic reader crashes
+
+      For the rare cases where the reader DOES die (pipe broken, buffer
+      overflow, framework bug), the original behavior was: subsequent
+      `send()` calls write to pi's stdin, queue a pending Future, and
+      time out `request_timeout` seconds later. Operator sees "pi is
+      slow" instead of "pi is unreachable."
+
+      `_read_stdout_loop` now catches `BaseException` (re-raises
+      `CancelledError`), stashes the exception in `self._reader_failure`,
+      logs at ERROR + prints to stderr, then re-raises so the `finally`
+      still fires `_fail_pending` as before.
+
+      `send()` checks `self._reader_failure` first; if set, raises
+      `PiRpcProcessError` immediately with the original exception
+      chained via `__cause__` for forensic debugging.
+
+      ## Files
+
+      ### src/libharness/pi/jsonl.py
+
+      `StrictJsonlDecoder.feed()` signature: returns `(records, errors)`
+      tuple. Per-record decode failures collected into `errors`; buffer
+      overflow still raises. Class docstring updated with the F14
+      rationale.
+
+      ### src/libharness/pi/rpc.py
+
+      `PiRpcClient.__init__`: new fields `_jsonl_decode_error_count`,
+      `_first_jsonl_decode_error`, `_last_jsonl_decode_error`,
+      `_reader_failure`. `_read_stdout_loop` unpacks the new tuple,
+      handles errors with the triple-visibility pattern, wraps the
+      main loop in `try/except BaseException` (re-raises
+      `CancelledError`) to stash `_reader_failure` and log loudly.
+      `send()` checks `_reader_failure` and fails fast if set.
+
+      ### src/libharness/pi/server.py
+
+      `_serve_client`: handle the new `(records, errors)` tuple from
+      `decoder.feed()`; raise `ToolError` on any decode error.
+
+      ### tests/pi/test_jsonl.py
+
+      5 cases now (was 2): existing LF-only and multi-frame plus
+      new skip-bad-records, recovers-across-calls, and
+      buffer-overflow-still-raises.
+
+      ### tests/pi/test_f14_reader_death.py (new)
+
+      4 cases: `send()` fails fast when `_reader_failure` set;
+      `send()` works normally when reader alive (sanity); counters
+      start at zero; full integration test drives the reader loop
+      with a mixed good/bad chunk and asserts records delivered AND
+      counter incremented AND logger fired AND stderr fallback fired.
+
+      ### dev-notes/2026-05-17-v8-port-deferred-items.md
+
+      F14 row: Fix → Done. New § B.F14 detail entry explaining the
+      two-layered resolution. Recommendations summary updated: Fix-now
+      drops 1 → 0; Done climbs 28 → 29. **All "fix now" items are
+      now resolved.**
+
+      ### dev-notes/SESSION-STATE.md
+
+      New "F14 resolved" bullet at the top of § Current state. Tests
+      count updated 143 → 150.
+
+      ## Acceptance
+
+        - `make test`: 150 unit tests pass on both venvs (was 143;
+          +5 jsonl decoder cases, +4 F14 client-side cases).
+        - `make test-live`: all 3 live tests pass on both venvs.
+        - `make lint`, `make typecheck` (mypy strict + pyright):
+          0 issues on both venvs.
+        - Suite timing unchanged (~10s).
+
+      ## Net effect on reader robustness
+
+      Before: any per-record JSONL decode error kills the reader →
+      whole session breaks → caller times out 30s later.
+
+      After: per-record errors logged loudly + counted + skipped;
+      reader stays alive; session continues. Catastrophic crashes
+      (pipe broken, framework bug) still kill the reader BUT
+      subsequent `send()` calls fail immediately with a clear error
+      rather than the silent-timeout antipattern.
+    files:
+      - src/libharness/pi/jsonl.py
+      - src/libharness/pi/rpc.py
+      - src/libharness/pi/server.py
+      - tests/pi/test_jsonl.py
+      - tests/pi/test_f14_reader_death.py
+      - dev-notes/2026-05-17-v8-port-deferred-items.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/commit-plans/2026-05-25-f14-reader-survival.yaml

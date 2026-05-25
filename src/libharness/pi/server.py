@@ -149,7 +149,9 @@ class PythonToolServer:
             chunk = await asyncio.wait_for(
                 reader.readuntil(b"\n"), timeout=max(1.0, self.timeout_ms / 1000.0)
             )
-            records = decoder.feed(chunk)
+            records, errors = decoder.feed(chunk)
+            if errors:
+                raise ToolError(f"malformed JSONL in bridge request: {errors[0]}")
             if len(records) != 1 or not isinstance(records[0], dict):
                 raise ToolError("expected exactly one JSON object request")
             request = records[0]

@@ -133,7 +133,7 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 | F11 | MOD  | `_decision_timeouts_ms` mutable class-default footgun                  | Done  |
 | F12 | MOD  | `Agent.__init__` silently overwrites three user-provided kwargs        | Done  |
 | F13 | MOD  | `watch_disconnect` sets `cancelled` in finally on normal completion    | Done  |
-| F14 | MOD  | Reader-task death doesn't terminate pi subprocess                      | Fix   |
+| F14 | MOD  | Reader-task death doesn't terminate pi subprocess                      | Done  |
 | F15 | MOD  | `close()` hangs if reader awaits handler that swallows CancelledError  | Done  |
 | F16 | MOD  | `ProcessLookupError` during SIGTERM aborts `close()` cleanup           | Done  |
 | F17 | MOD  | `Agent` not exercised in the 13-test suite                             | Done  |
@@ -158,6 +158,7 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 
 **Detail (Tier-2 items I recommend keeping deferred):**
 
+- *F14 — Done (2026-05-25).* Resolved by **two layered fixes**, not by the synthesis doc's "conservative vs aggressive kill" dichotomy (which turned out to be a false dichotomy). (1) `StrictJsonlDecoder.feed()` returns `(records, errors)` instead of raising on the first malformed record; per-record decode failures are surfaced loudly (logger.error + `print(..., file=sys.stderr, flush=True)` belt-and-braces + tracked on the client as `_jsonl_decode_error_count` / `_first_jsonl_decode_error` / `_last_jsonl_decode_error`) so a pi-side bug doesn't get silently swallowed; the decoder's state advances past the bad record so subsequent reads still work. (2) For the residual catastrophic cases where the reader does die (pipe broken, buffer overflow, framework bug), the exception is stashed in `_reader_failure`; `send()` checks this and fails fast with a clear `PiRpcProcessError` instead of writing to pi's stdin and timing out 30s later. Net effect: the reader stays alive across realistic transient pi bugs (visibility preserved via log + stderr + counter), and the catastrophic cases produce immediate caller-visible errors. Regression tests: `tests/pi/test_jsonl.py` (5 cases for the decoder) + `tests/pi/test_f14_reader_death.py` (4 cases for the client-side counters + fail-fast). Also fixed `server.py:_serve_client`'s `decoder.feed()` call to handle the new tuple return.
 - *F8 — Done (2026-05-24).* Resolved by folding sync-hook dispatch into the owner thread, **not** by changing executor sharing scope. `hook_executor` removed from `HarnessRuntime` entirely. Sync hooks now enqueue `_HookCall` messages on the harness command queue; the owner thread (`PiAgentHarness-<id>`) consumes them naturally serialized FIFO with the harness's other operations. Operations that touch the loop (`call_rpc`, `start`, `close`, `(un)subscribe_client_events`) return `concurrent.futures.Future`; the owner-thread dispatcher registers a `_Continuation` callback and stays free to handle hook calls during long-running RPCs. Cross-harness HITL serialization is structurally impossible — each harness has its own queue and its own consumer. Regression: existing `test_threaded_agent.py` + the rewritten `test_sync_hook_fires_on_owner_thread_not_loop` and `test_concurrent_decision_events_are_serialized_by_owner_thread` pin the new invariants. **Follow-up gap:** `threaded=False` mode still uses `asyncio`'s default executor for sync hooks (MainThread blocked on `Future.result()` can't pump the queue). Tracked as a new entry in § C and in `dev-notes/2026-05-24-level-3-runtime-audit.md`.
 - *F17 — Done.* The synthesis doc was written against the pre-Phase-6 state (13 tests). After Phase 6, `tests/pi/test_agent_class.py` has 16 tests against Agent (including 3 strict-mode E2E tests for decision events from Item C), and `test_decision_hooks.py` / `test_channel_separation.py` exercise the surface further. The 56-test suite resolves the bulk of this finding. Any remaining gaps are absorbed by the future tests for the other fixes.
 - *F20 — Done.* Already folded into commit `4d0bee1` (Tier-1 fixes) per the synthesizer's note. Listed in the table for completeness; no action needed.
@@ -281,15 +282,15 @@ The *feature* is supported; only the *test* is missing. Not a real deferral. Fol
 
 | Recommendation                        | Count |
 | ------------------------------------- | ----- |
-| **Fix now** — need the council        | 1     |
+| **Fix now** — need the council        | 0     |
 | **Remain deferred** — strong position | 10    |
-| **Done**                              | 28    |
+| **Done**                              | 29    |
 
 **Detail (which items go in each bucket):**
 
-- *Fix now (1, needs the 4-LLM council for design call):* F14 (reader-task death — conservative-fail-pending vs aggressive-kill-pi).
+- *Fix now (0):* all priority items resolved.
 - *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass — risk now documented in `AgentHookSurface` docstring), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
-- *Done (28):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 commit `13dd691` — A.2 / F27, F19, F24, F33, F34, F36; batch 4a — F9, F13, F15, F16; **F8 (2026-05-24) — fold-hooks-into-owner-thread; see § B detail above**; **C.3 (2026-05-25) — MainThread-as-pump in threaded=False; see § C detail above**.
+- *Done (29):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 commit `13dd691` — A.2 / F27, F19, F24, F33, F34, F36; batch 4a — F9, F13, F15, F16; **F8 (2026-05-24) — fold-hooks-into-owner-thread; see § B detail above**; **C.3 (2026-05-25) — MainThread-as-pump in threaded=False; see § C detail above**; **F14 (2026-05-25) — reader stays alive across per-record decode errors (logged + counter); catastrophic crashes fail-fast on next send; see § B.F14 detail above**.
 
 ### C.3: `threaded=False` design debt — MainThread is now the queue consumer (DONE 2026-05-25)
 

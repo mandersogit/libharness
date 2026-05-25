@@ -146,6 +146,20 @@ class PiRpcClient:
         # hanging forever. asyncio.Event creation is loop-agnostic at
         # construction time; the loop is bound on first await.
         self._close_event: asyncio.Event = asyncio.Event()
+        # F14: visibility for malformed JSONL from pi. Each per-record
+        # decode failure is logged loudly + printed to stderr (see
+        # `_read_stdout_loop`), AND tracked here so callers can see the
+        # count programmatically (e.g. for monitoring, regression tests,
+        # or harness diagnostics). The decoder advances past bad records,
+        # so the reader stays alive; this counter is the way operators
+        # learn that pi has emitted garbage.
+        self._jsonl_decode_error_count: int = 0
+        self._first_jsonl_decode_error: str | None = None
+        self._last_jsonl_decode_error: str | None = None
+        # F14: stash any catastrophic exception that killed the reader so
+        # subsequent send() calls can fail fast instead of writing to
+        # stdin + waiting for a response nobody will read.
+        self._reader_failure: BaseException | None = None
 
     @property
     def stderr(self) -> str:
@@ -309,6 +323,16 @@ class PiRpcClient:
         self.process = None
 
     async def send(self, command: Mapping[str, Any], *, timeout: float | None = None) -> JsonObject:
+        # F14: if the reader task died of a catastrophic exception (not
+        # cancellation, not clean stdout close), fail fast. Otherwise the
+        # caller would write to pi's stdin, queue a future in `_pending`,
+        # and time out `request_timeout` seconds later — the user sees
+        # "pi is slow" when in fact the reader is gone.
+        if self._reader_failure is not None:
+            raise PiRpcProcessError(
+                f"Pi RPC reader task died ({self._reader_failure!r}); "
+                f"close the harness and start a new one. stderr={self.stderr!r}"
+            ) from self._reader_failure
         proc = self.process
         if proc is None or proc.stdin is None:
             raise PiRpcProcessError("Pi RPC client is not started")
@@ -550,9 +574,43 @@ class PiRpcClient:
                 chunk = await self.process.stdout.read(4096)
                 if not chunk:
                     break
-                for value in decoder.feed(chunk):
+                records, errors = decoder.feed(chunk)
+                # F14: surface every per-record decode error loudly. These
+                # indicate pi-side bugs (pi shouldn't emit malformed JSONL);
+                # silent skip would let a one-off bug compound into mystery
+                # behavior. Log + stderr-print is belt-and-braces in case
+                # the embedding app silences the libharness logger.
+                for err in errors:
+                    self._jsonl_decode_error_count += 1
+                    msg = str(err)
+                    if self._first_jsonl_decode_error is None:
+                        self._first_jsonl_decode_error = msg
+                    self._last_jsonl_decode_error = msg
+                    _LOG.error("malformed JSONL from pi (skipped): %s", msg)
+                    print(
+                        f"libharness.pi: malformed JSONL from pi (skipped): {msg}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                for value in records:
                     if isinstance(value, dict):
                         await self._handle_message(value)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            # F14: a non-cancellation exception killed the reader. The
+            # finally below still fires _fail_pending, so any pending
+            # request gets the error. Stash the failure so subsequent
+            # send() calls can fail fast (otherwise they'd write to pi's
+            # stdin, queue a future, and time out after `request_timeout`).
+            self._reader_failure = exc
+            _LOG.exception("Pi RPC reader task died: %r", exc)
+            print(
+                f"libharness.pi: reader task died: {exc!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
         finally:
             if not self._closed:
                 self._fail_pending(PiRpcProcessError(f"Pi stdout closed. stderr={self.stderr!r}"))
