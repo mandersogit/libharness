@@ -133,24 +133,17 @@ class HarnessRuntime:
         *,
         loop_thread: AsyncioLoopThread | None = None,
         tool_executor: concurrent.futures.ThreadPoolExecutor | None = None,
-        hook_executor: concurrent.futures.ThreadPoolExecutor | None = None,
         max_tool_workers: int | None = None,
         loop_thread_name: str = "PiAsyncioLoop-Thread-2",
         tool_thread_name_prefix: str = "pi-tool",
-        hook_thread_name_prefix: str = "pi-hook",
     ) -> None:
         self.loop_thread = loop_thread or AsyncioLoopThread(thread_name=loop_thread_name)
         self.tool_executor = tool_executor or concurrent.futures.ThreadPoolExecutor(
             max_workers=max_tool_workers,
             thread_name_prefix=tool_thread_name_prefix,
         )
-        self.hook_executor = hook_executor or concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix=hook_thread_name_prefix,
-        )
         self._owns_loop_thread = loop_thread is None
         self._owns_tool_executor = tool_executor is None
-        self._owns_hook_executor = hook_executor is None
         self._closed = False
 
     @property
@@ -185,8 +178,6 @@ class HarnessRuntime:
             self.loop_thread.stop(timeout=timeout)
         if shutdown_executor and self._owns_tool_executor:
             self.tool_executor.shutdown(wait=True, cancel_futures=cancel_futures)
-        if shutdown_executor and self._owns_hook_executor:
-            self.hook_executor.shutdown(wait=True, cancel_futures=cancel_futures)
         self._closed = True
 
     def __enter__(self) -> HarnessRuntime:

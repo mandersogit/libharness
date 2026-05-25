@@ -37,31 +37,38 @@ def test_async_hook_fires_on_runtime_loop_thread() -> None:
 
     agent = AsyncHookAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     try:
-        runtime.run_async(agent._async_on_event({"type": "agent_start"}))
+        agent.pump_until(agent._async_on_event({"type": "agent_start"}))
         assert seen == [(runtime.loop_thread_id, "PiAsyncioLoop-agent-test", "agent_start")]
     finally:
         agent.close()
         runtime.close()
 
 
-def test_sync_hook_fires_on_dedicated_hook_executor_thread() -> None:
-    runtime = HarnessRuntime(
-        loop_thread_name="PiAsyncioLoop-sync-hook-test",
-        hook_thread_name_prefix="dedicated-pi-hook",
-    )
+def test_sync_hook_fires_on_owner_thread_not_loop() -> None:
+    """F8 (post-Level-2): sync notification hooks run on the owner thread,
+    routed through `_HookCall` on the harness command queue. There is no
+    dedicated `hook_executor`; hooks are serialized with the harness's
+    other operations naturally via the single-consumer queue."""
+    runtime = HarnessRuntime(loop_thread_name="PiAsyncioLoop-sync-hook-test")
     seen: list[tuple[int, str, str]] = []
 
     class SyncHookAgent(Agent):
         def on_agent_start(self, event: AgentEvent) -> None:
             seen.append((threading.get_ident(), threading.current_thread().name, event.type))
 
-    agent = SyncHookAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
+    agent = SyncHookAgent(
+        ToolRegistry(),
+        config=fake_config(),
+        runtime=runtime,
+        owner_thread_name="PiAgentHarness-sync-hook-test",
+    )
     try:
-        runtime.run_async(agent._async_on_event({"type": "agent_start"}))
+        agent.pump_until(agent._async_on_event({"type": "agent_start"}))
         assert len(seen) == 1
         thread_id, thread_name, event_type = seen[0]
-        assert thread_id != runtime.loop_thread_id
-        assert thread_name.startswith("dedicated-pi-hook")
+        assert thread_id != runtime.loop_thread_id, "must not run on the loop"
+        assert thread_id == agent.owner_thread_id, "must run on the owner thread"
+        assert thread_name == "PiAgentHarness-sync-hook-test"
         assert event_type == "agent_start"
     finally:
         agent.close()
@@ -84,7 +91,7 @@ def test_switch_color_subclass_clears_inherited_async_and_defines_sync() -> None
 
     agent = B(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     try:
-        runtime.run_async(agent._async_on_event({"type": "agent_start"}))
+        agent.pump_until(agent._async_on_event({"type": "agent_start"}))
         assert seen == ["sync:agent_start"]
     finally:
         agent.close()
@@ -100,7 +107,7 @@ def test_strict_mode_raises_on_known_unhandled_event() -> None:
     agent = StrictAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     try:
         with pytest.raises(UnhandledEventError, match="agent_start"):
-            runtime.run_async(agent._async_on_event({"type": "agent_start"}))
+            agent.pump_until(agent._async_on_event({"type": "agent_start"}))
     finally:
         agent.close()
         runtime.close()
@@ -158,7 +165,7 @@ def test_extension_ui_request_is_skipped_even_in_strict_mode() -> None:
 
     agent = StrictAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     try:
-        runtime.run_async(
+        agent.pump_until(
             agent._async_on_event({"type": "extension_ui_request", "method": "confirm"})
         )
     finally:
@@ -186,7 +193,7 @@ def test_strict_mode_accepts_all_declared_notification_events() -> None:
     agent = StrictAllAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     try:
         for event_name in sorted(Agent._EVENT_NAMES):
-            runtime.run_async(agent._async_on_event({"type": event_name}))
+            agent.pump_until(agent._async_on_event({"type": event_name}))
         assert set(seen) == set(Agent._EVENT_NAMES)
     finally:
         agent.close()
@@ -208,8 +215,8 @@ def test_notification_hook_exception_is_logged_and_subsequent_events_dispatch(
 
     agent = RaisingAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     try:
-        runtime.run_async(agent._async_on_event({"type": "agent_start"}))
-        runtime.run_async(agent._async_on_event({"type": "agent_end"}))
+        agent.pump_until(agent._async_on_event({"type": "agent_start"}))
+        agent.pump_until(agent._async_on_event({"type": "agent_end"}))
         assert seen == ["agent_end"]
         assert "Agent notification hook failed for event agent_start" in caplog.text
     finally:
@@ -261,7 +268,7 @@ def test_strict_mode_accepts_all_decision_events_notify_only() -> None:
     try:
         cancelled = threading.Event()
         for event_name in sorted(Agent._DECISION_EVENT_NAMES):
-            runtime.run_async(
+            agent.pump_until(
                 agent._async_on_bridge_event(
                     {"type": event_name}, cancelled, False, None
                 )
@@ -309,7 +316,7 @@ def test_strict_mode_accepts_all_decision_events_with_decide() -> None:
     try:
         cancelled = threading.Event()
         for event_name in sorted(Agent._DECISION_EVENT_NAMES):
-            runtime.run_async(
+            agent.pump_until(
                 agent._async_on_bridge_event(
                     {"type": event_name}, cancelled, True, f"req-{event_name}"
                 )
@@ -333,7 +340,7 @@ def test_strict_mode_raises_on_unknown_decision_event() -> None:
     try:
         cancelled = threading.Event()
         with pytest.raises(UnhandledEventError, match="not_a_real_event"):
-            runtime.run_async(
+            agent.pump_until(
                 agent._async_on_bridge_event(
                     {"type": "not_a_real_event"}, cancelled, False, None
                 )

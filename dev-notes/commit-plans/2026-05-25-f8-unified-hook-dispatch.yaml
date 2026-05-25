@@ -1,0 +1,208 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): F8 — unified sync hook dispatch, one code path for both modes
+
+      Combines what was sketched as Level 2 + Level 3 Option A in the
+      runtime audit plan. Two related changes shipped together because
+      they touch the same files and Option A is a small extension of the
+      Level 2 dispatcher restructure.
+
+      ## Headline
+
+      Resolves F8 (HIGH severity, 3-reviewer agreement) by changing the
+      threading topology: sync hook dispatch moves from a dedicated
+      `hook_executor` (shared across harnesses → cross-harness HITL
+      serialization) to the harness's own command queue, consumed by
+      either the dedicated owner thread (`threaded=True`) or MainThread
+      pumping via `_call` / `pump_until` (`threaded=False`). One code
+      path; consumer varies with mode. `hook_executor` removed entirely
+      from `HarnessRuntime`.
+
+      Threading model post-fix (4 thread kinds):
+
+      ```text
+      MainThread                  — application code (or owner-thread role under threaded=False)
+      PiAsyncioLoop-Thread-2      — pi + bridge I/O, async hooks (loop-cooperative only)
+      PiAgentHarness-<id>         — RPC dispatch + sync hooks (per harness, threaded=True)
+      pi-tool_*                   — Python tools (shared pool)
+      ```
+
+      ## Owner-thread dispatcher (Level 2)
+
+      `_owner_loop` now delegates to a shared `_process_item` that
+      handles three message types:
+
+        - `_OpEnvelope (operation, future)` — operation may return a
+          `concurrent.futures.Future` (loop-bound work) instead of
+          blocking; dispatcher registers a `_Continuation` callback and
+          returns to the queue.
+        - `_Continuation (loop_future, main_future)` — completion
+          notification from the loop. Propagates the loop result to the
+          waiting main_future.
+        - `_HookCall (fn, event_name, completion)` — invoke a sync hook;
+          set `completion` for decision hooks (return value flows back to
+          pi) or leave None for notification hooks (exceptions logged).
+
+      The owner thread no longer blocks on `operation().result()` — it
+      registers a continuation and stays available to handle hook calls
+      during the in-flight RPC.
+
+      ## MainThread-as-pump (Level 3 Option A)
+
+      `_call` in `threaded=False` mode now does the same dispatcher
+      work using the same `_process_item`, with MainThread as the queue
+      consumer:
+
+      ```python
+      if not self.threaded:
+          main_future = concurrent.futures.Future()
+          self._commands.put((operation, main_future))
+          self._pump_until(main_future)
+          return main_future.result()
+      ```
+
+      `pump_until(target)` is the public helper for tests that bypass
+      the harness public API. `target` may be a coroutine / Future /
+      threading.Event; the helper submits to the loop if needed, then
+      pumps the queue while waiting.
+
+      `_dispatch_sync_hook` lost its `if self.threaded:` branch — always
+      enqueues `_HookCall` on `self._commands`. One code path; consumer
+      is whoever is currently pumping (owner thread or MainThread).
+
+      ## Operations restructured to return Futures
+
+      `_PiAgentHarnessCore.call_rpc`, `start`, `close`,
+      `subscribe_client_events`, `unsubscribe_client_events` now return
+      `concurrent.futures.Future` instead of blocking. The dispatcher
+      registers continuations transparently. `PiAgentHarness._call` uses
+      `@overload` so Future-returning operations type-correctly unwrap
+      to the underlying value for public-method callers.
+
+      `start()` and `close()` wrap their sequential `runtime.run_async`
+      calls in single async coroutines so the whole sequence runs on
+      the loop and resolves via one continuation.
+
+      ## Test refactor
+
+      Centralized via `pump_until`, so the per-test churn is small:
+
+        - `_event_request` test helper in `test_decision_hooks.py` —
+          moves socket I/O onto a worker thread; MainThread pumps the
+          harness queue while waiting for the response future. Tests
+          using it gained one `agent` argument.
+        - `test_channel_separation.py` — its inline raw-socket test
+          got the same worker-thread+pump treatment.
+        - White-box dispatch sites — mechanical `runtime.run_async(
+          agent._async_on_event(...))` → `agent.pump_until(
+          agent._async_on_event(...))`. ~10 lines across
+          `test_agent_class.py`, `test_decision_hooks.py`,
+          `test_ergonomic_pass_cluster1.py`, `test_ergonomic_pass_cluster2.py`.
+        - `test_cancellation_mid_decision_when_bridge_connection_closes`
+          — now uses `agent.pump_until(exited, timeout=2.0)`.
+        - `test_bridge_connection_drop_mid_decision_does_not_deadlock`
+          — switched to `threaded=True` because its sync hook busy-waits
+          (and MainThread can't run a busy-wait hook AND close the
+          socket at the same time). Documented as a known limitation in
+          AGENT_HOOKS.md.
+        - `test_sync_hook_fires_on_dedicated_hook_executor_thread` /
+          `test_sync_decision_hook_runs_on_hook_executor_and_returns_result`
+          / `test_concurrent_decision_events_are_serialized_by_hook_executor`
+          — renamed + switched to `threaded=True` to pin the new
+          owner-thread invariants directly.
+
+      ## Files
+
+      ### src/libharness/pi/agent.py
+
+      New message types `_Continuation`, `_HookCall`; `_WAKE` sentinel
+      (module-level) so done-callbacks can wake a pump-mode queue
+      consumer. `_owner_loop` extracted into `_process_item` shared
+      with `_pump_until`. `_call` pumps in `threaded=False`.
+      `pump_until` public helper accepting coro / Future / Event.
+      `_PiAgentHarnessCore.start`/`close`/`call_rpc`/(un)subscribe
+      return Futures; lifecycle work wrapped in single async coroutines.
+
+      ### src/libharness/pi/agent_class.py
+
+      `_dispatch_notification_hook` and `_dispatch_decision_hook`
+      delegate to new `_dispatch_sync_hook` helper.
+      `_dispatch_sync_hook` always enqueues `_HookCall` — no
+      `if self.threaded:` branch.
+
+      ### src/libharness/pi/runtime.py
+
+      `hook_executor` parameter + field + `_owns_hook_executor` +
+      shutdown branch all removed. `HarnessRuntime` now owns only
+      `loop_thread` + `tool_executor`. Constructor signature loses
+      the `hook_executor` and `hook_thread_name_prefix` kwargs.
+
+      ### Tests
+
+      `tests/pi/test_agent_class.py` — sync-hook test renamed + flipped
+      to `threaded=True`; all `runtime.run_async(agent._async_on_*(...))`
+      sites swapped to `agent.pump_until(...)`.
+      `tests/pi/test_decision_hooks.py` — `_event_request` helper
+      refactored to worker-thread + pump; call sites updated;
+      cancellation tests use `pump_until(event)`;
+      bridge-drop test moved to `threaded=True` (busy-wait limitation).
+      `tests/pi/test_channel_separation.py` — inline raw-socket pattern
+      moved to worker-thread + pump.
+      `tests/pi/test_ergonomic_pass_cluster1.py` — `runtime.run_async(
+      agent._dispatch_decision_hook(...))` → `agent.pump_until(...)`.
+      `tests/pi/test_ergonomic_pass_cluster2.py` — same mechanical
+      conversion for one site.
+
+      ### Docs
+
+      `docs/AGENT_HOOKS.md` — threading diagram updated (no `pi-hook_0`);
+      sync-hook prose rewritten for the owner-queue + MainThread-pump
+      model; documented the blocking-sync-hook limitation under
+      `threaded=False`.
+      `dev-notes/2026-05-17-v8-port-deferred-items.md` — F8 row marked
+      Done; new § B.F8 detail; C.3 (`threaded=False` design debt)
+      added then immediately marked Done with the Option A detail;
+      summary count Done 26 → 28.
+      `dev-notes/SESSION-STATE.md` — two new top-of-current-state
+      bullets covering Level 2 and Level 3 Option A; § Pending tasks
+      updated (threaded=False removed since resolved; HarnessRuntime
+      audit kept as the remaining Level 3 work).
+      `dev-notes/2026-05-24-level-3-runtime-audit.md` (NEW) —
+      status `Partial (Option A landed 2026-05-25; HarnessRuntime
+      audit remains)`. Contains the design discussion + the Option A
+      "Outcome" section + the still-open `HarnessRuntime` scope
+      questions (Q1–Q4).
+
+      ## Acceptance
+
+        - `make test`: 143 unit tests pass on both venvs.
+        - `make test-live`: all 3 live tests pass on both venvs.
+        - `make lint`, `make typecheck` (mypy strict + pyright): 0 issues
+          on both venvs.
+        - Suite timing unchanged (~10s).
+
+      ## Known limitation (documented, not fixed)
+
+      Under `threaded=False`, blocking sync hooks (busy-wait,
+      `time.sleep`, blocking I/O) block MainThread itself, so tests
+      that need test-driver work concurrent with hook execution must
+      use `threaded=True`. This is fundamental to "MainThread is the
+      runtime thread" in single-threaded mode and not fixable without
+      re-introducing a worker thread for hooks (which would defeat
+      the unified-dispatch goal).
+    files:
+      - src/libharness/pi/agent.py
+      - src/libharness/pi/agent_class.py
+      - src/libharness/pi/runtime.py
+      - tests/pi/test_agent_class.py
+      - tests/pi/test_decision_hooks.py
+      - tests/pi/test_channel_separation.py
+      - tests/pi/test_ergonomic_pass_cluster1.py
+      - tests/pi/test_ergonomic_pass_cluster2.py
+      - docs/AGENT_HOOKS.md
+      - dev-notes/2026-05-17-v8-port-deferred-items.md
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/2026-05-24-level-3-runtime-audit.md
+      - dev-notes/commit-plans/2026-05-25-f8-unified-hook-dispatch.yaml

@@ -18,13 +18,14 @@ decision events that arrive over the TypeScript bridge channel.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import logging
 import threading
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, cast
 
-from .agent import PiAgentHarness
+from .agent import PiAgentHarness, _HookCall
 from .events import AgentEvent, HookContext, UnhandledEventError
 from .hook_surface import AgentHookSurface
 
@@ -138,14 +139,12 @@ class Agent(AgentHookSurface, PiAgentHarness):
             return
 
         if sync_handler is not None:
-            loop = asyncio.get_running_loop()
             try:
-                # F22: `run_in_executor` returns the sync handler's return
-                # value. If the handler returned a coroutine (i.e., is
-                # accidentally `async def` instead of `def`), discarding it
-                # would mean the hook silently never runs. Raise instead.
-                result = await loop.run_in_executor(
-                    self.runtime.hook_executor, sync_handler, event
+                # F22: capture the sync handler's return value so we can
+                # detect an accidental `async def` (which would otherwise
+                # silently never run).
+                result = await self._dispatch_sync_hook(
+                    lambda: sync_handler(event), event_name=name
                 )
                 if inspect.isawaitable(result):
                     raise TypeError(
@@ -179,7 +178,6 @@ class Agent(AgentHookSurface, PiAgentHarness):
                 raise
 
         if sync_handler is not None:
-            loop = asyncio.get_running_loop()
 
             def call() -> object | None:
                 value = _call_decision_handler(sync_handler, event, ctx)
@@ -188,7 +186,7 @@ class Agent(AgentHookSurface, PiAgentHarness):
                 return value
 
             try:
-                return await loop.run_in_executor(self.runtime.hook_executor, call)
+                return cast(object | None, await self._dispatch_sync_hook(call, event_name=name))
             except Exception as exc:
                 _LOG.exception("Agent decision hook failed for event %s", name)
                 exc._libharness_logged = True  # type: ignore[attr-defined]
@@ -197,6 +195,22 @@ class Agent(AgentHookSurface, PiAgentHarness):
         if self._raise_on_unhandled_event:
             raise UnhandledEventError(f"no decision handler defined for event of type {name!r}")
         return None
+
+    async def _dispatch_sync_hook(
+        self, fn: Callable[[], Any], *, event_name: str
+    ) -> Any:
+        """Run a sync hook function off the asyncio loop thread.
+
+        F8 / Level-3-Option-A: sync hooks always enqueue a ``_HookCall``
+        on the harness command queue. A single dispatcher consumer
+        processes it — the dedicated owner thread (``threaded=True``) or
+        MainThread pumping via ``_call`` / ``pump_until``
+        (``threaded=False``). One code path; consumer varies with mode.
+        """
+        loop = asyncio.get_running_loop()
+        completion: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        self._commands.put(_HookCall(fn=fn, event_name=event_name, completion=completion))
+        return await asyncio.wrap_future(completion, loop=loop)
 
     def _install_agent_event_dispatcher(self) -> None:
         if self._agent_event_unsubscribe is not None:

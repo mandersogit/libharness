@@ -13,15 +13,18 @@ thread, including ``MainThread``.
 
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
+import contextlib
+import logging
 import queue
 import tempfile
 import threading
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, cast, overload
 
 from .hook_surface import validate_decision_timeouts_mapping
 from .rpc import PiLaunchConfig, PiRpcClient
@@ -46,9 +49,55 @@ class HarnessSnapshot:
     extension_paths: tuple[Path, ...]
 
 
+_LOG = logging.getLogger(__name__)
+
 _T = TypeVar("_T")
 _Command = tuple[Callable[["_PiAgentHarnessCore"], Any], concurrent.futures.Future[Any]]
 _STOP = object()
+_WAKE = object()
+"""Sentinel that ``_pump_until`` enqueues on its waited-future's
+done-callback. Wakes the queue consumer out of ``queue.get()`` so it can
+re-check the future. Recognized as a no-op by any consumer
+(``_pump_until`` itself OR the owner-thread loop) so stale wakes from
+prior pumps don't break anything."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Continuation:
+    """Owner-thread message: a loop-future completed, propagate to main_future.
+
+    Operations submitted via ``submit()`` may return a ``concurrent.futures.Future``
+    (indicating the operation hands off async work to the loop). The owner
+    thread registers a done callback on that future which posts a
+    ``_Continuation`` back to its queue. When processed, the continuation
+    propagates the loop's result to the caller's main_future.
+
+    F8: this is the mechanism that keeps the owner thread free to handle
+    sync hook dispatch while a long-running RPC is in flight on the loop.
+    """
+
+    loop_future: concurrent.futures.Future[Any]
+    main_future: concurrent.futures.Future[Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _HookCall:
+    """Owner-thread message: invoke a sync hook from the loop.
+
+    F8: sync hooks (``on_<event>``, ``decide_<event>``) cannot run on the
+    asyncio loop thread (cooperative scheduling), and shouldn't run on the
+    tool pool (saturation risk). They run on the owner thread instead —
+    naturally serialized with the harness's RPC dispatch.
+
+    For notification hooks, ``completion`` is set so the loop can await
+    completion (preserves FIFO event ordering). For decision hooks,
+    ``completion`` is also set and additionally carries the hook's return
+    value (which the loop hands back to pi).
+    """
+
+    fn: Callable[[], Any]
+    event_name: str
+    completion: concurrent.futures.Future[Any] | None
 _BridgeEventHandler = Callable[
     [Mapping[str, Any], threading.Event, bool, str | None], Awaitable[object | None]
 ]
@@ -104,7 +153,10 @@ class PiAgentHarness:
         self.threaded = threaded
         self._owns_runtime = runtime is None
         self._closed = False
-        self._commands: queue.Queue[_Command | object] | None = queue.Queue() if threaded else None
+        # F8 / Level-3-Option-A: queue exists in both modes. In threaded=True
+        # the dedicated owner thread consumes it; in threaded=False MainThread
+        # pumps it via `_call`/`pump_until`. Same dispatcher, different consumer.
+        self._commands: queue.Queue[Any] = queue.Queue()
         self._owner_thread: threading.Thread | None = None
         self._owner_thread_name = owner_thread_name
         self._owner_ready: concurrent.futures.Future[None] = concurrent.futures.Future()
@@ -314,34 +366,223 @@ class PiAgentHarness:
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.close()
 
-    def _call(self, operation: Callable[[_PiAgentHarnessCore], _T]) -> _T:
+    @overload
+    def _call(
+        self,
+        operation: Callable[[_PiAgentHarnessCore], concurrent.futures.Future[_T]],
+    ) -> _T: ...
+    @overload
+    def _call(self, operation: Callable[[_PiAgentHarnessCore], _T]) -> _T: ...
+    def _call(self, operation: Callable[[_PiAgentHarnessCore], Any]) -> Any:
+        """Run an operation on the harness's owner thread; block for the result.
+
+        Operations may return a value (sync) or a ``concurrent.futures.Future``
+        (the operation handed work off to the asyncio loop; F8). The
+        dispatcher unwraps either case so callers see the value.
+
+        Level-3-Option-A: in ``threaded=False`` mode, MainThread *is* the
+        owner thread, so we pump the command queue here while waiting for
+        our operation's result. This is the same dispatcher loop the owner
+        thread runs in ``threaded=True`` mode — just consumed by MainThread
+        instead. Single code path; consumer varies with mode.
+        """
         if self._closed:
             raise RuntimeError("PiAgentHarness is closed")
-        if not self.threaded:
+        if self.threaded:
+            return self.submit(operation).result()
+        # threaded=False: MainThread pumps the queue.
+        if self._core is None:
+            self._core = _PiAgentHarnessCore(**self._core_kwargs)
+        main_future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        self._commands.put((operation, main_future))
+        self._pump_until(main_future)
+        return main_future.result()
+
+    def pump_until(
+        self,
+        target: Awaitable[Any] | concurrent.futures.Future[Any] | threading.Event,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        """Submit a coro / wait on a Future / wait on an Event; pump the
+        harness command queue while waiting.
+
+        For ``threaded=False`` callers (tests) that inject events directly
+        bypassing the harness public API — e.g. ``agent.pump_until(
+        agent._async_on_event({"type": "agent_start"}))``. While MainThread
+        pumps, sync hooks dispatched from the loop are picked up and run
+        on MainThread, preserving the single-code-path invariant for sync
+        hook dispatch (Level-3-Option-A).
+
+        In ``threaded=True`` mode the owner thread is already pumping;
+        ``pump_until`` simply blocks on the target.
+
+        Target types:
+
+        - ``Awaitable`` / ``Coroutine`` — submitted to the loop; pump until
+          the resulting loop-future resolves; return the resolved value.
+        - ``concurrent.futures.Future`` — wait on it; return resolved value.
+        - ``threading.Event`` — wait until set (poll-based; ignores
+          completion futures since events don't have done-callbacks).
+          Returns the event's ``is_set()`` state. Honors ``timeout``.
+        """
+        if isinstance(target, threading.Event):
+            if self.threaded:
+                return target.wait(timeout)
             if self._core is None:
                 self._core = _PiAgentHarnessCore(**self._core_kwargs)
-            return operation(self._core)
-        return self.submit(operation).result()
+            return self._pump_until_event(target, timeout=timeout)
+        if isinstance(target, concurrent.futures.Future):
+            loop_future = target
+        else:
+            loop_future = self.runtime.submit_async(
+                cast("Coroutine[Any, Any, Any]", target)
+            )
+        if self.threaded:
+            return loop_future.result(timeout=timeout)
+        if self._core is None:
+            self._core = _PiAgentHarnessCore(**self._core_kwargs)
+        self._pump_until(loop_future)
+        return loop_future.result()
+
+    def _pump_until_event(self, event: threading.Event, *, timeout: float | None) -> bool:
+        """Pump the queue until ``event`` is set or the timeout expires.
+
+        Polls the event with a short queue-get timeout (events don't
+        provide done-callbacks the way Futures do, so the wake-sentinel
+        trick doesn't apply).
+        """
+        import time as _time
+
+        deadline = _time.monotonic() + timeout if timeout is not None else None
+        while not event.is_set():
+            if deadline is not None and _time.monotonic() >= deadline:
+                return False
+            try:
+                item = self._commands.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if item is _WAKE:
+                continue
+            if item is _STOP:
+                self._commands.put(_STOP)
+                raise RuntimeError("PiAgentHarness is closing")
+            self._process_item(item)
+        return True
+
+    def _pump_until(self, future: concurrent.futures.Future[Any]) -> None:
+        """Drain the command queue until ``future`` is done.
+
+        Used by both ``_call`` (waits for the operation's main_future) and
+        ``pump_until`` (waits for an arbitrary loop future). MainThread
+        becomes the queue consumer for the duration.
+
+        We register a done-callback on ``future`` that pushes a wake
+        sentinel onto the queue when the future resolves. Without this,
+        a future that completes without enqueueing any further work
+        (e.g. ``pump_until`` waiting on a loop coro that doesn't fire
+        any sync hooks) would leave ``queue.get()`` blocked forever.
+        """
+        future.add_done_callback(lambda _: self._commands.put(_WAKE))
+        while not future.done():
+            item = self._commands.get()
+            if item is _WAKE:
+                continue
+            if item is _STOP:
+                # If a close races in, re-queue it and bail (the close-lock
+                # guarantees _STOP is the last thing on the queue).
+                self._commands.put(_STOP)
+                raise RuntimeError("PiAgentHarness is closing")
+            self._process_item(item)
+
+    def _process_item(self, item: Any) -> None:
+        """Dispatch one command-queue item. Shared by owner thread + pump."""
+        if item is _WAKE:
+            # Stale wake sentinel from a `_pump_until` that already exited.
+            # No-op; the original waiter is gone.
+            return
+        if isinstance(item, _Continuation):
+            self._handle_continuation(item)
+            return
+        if isinstance(item, _HookCall):
+            self._handle_hook_call(item)
+            return
+        # Legacy (operation, main_future) tuple — operation may return a
+        # value (sync) or a concurrent.futures.Future (async; loop-bound).
+        operation, future = cast(_Command, item)
+        if not future.set_running_or_notify_cancel():
+            return
+        assert self._core is not None, "core must be constructed before dispatch"
+        try:
+            result = operation(self._core)
+        except BaseException as exc:
+            future.set_exception(exc)
+            return
+        if isinstance(result, concurrent.futures.Future):
+            self._register_continuation(result, future)
+        else:
+            future.set_result(result)
 
     def _owner_loop(self) -> None:
         try:
             self._core = _PiAgentHarnessCore(**self._core_kwargs)
             self._owner_ready.set_result(None)
-            assert self._commands is not None
             while True:
                 item = self._commands.get()
                 if item is _STOP:
                     return
-                operation, future = cast(_Command, item)
-                if future.set_running_or_notify_cancel():
-                    try:
-                        future.set_result(operation(self._core))
-                    except BaseException as exc:
-                        future.set_exception(exc)
+                self._process_item(item)
         except BaseException as exc:
             if not self._owner_ready.done():
                 self._owner_ready.set_exception(exc)
             raise
+
+    def _register_continuation(
+        self,
+        loop_future: concurrent.futures.Future[Any],
+        main_future: concurrent.futures.Future[Any],
+    ) -> None:
+        """Wire ``loop_future`` to deliver back to the owner queue.
+
+        When ``loop_future`` completes (on the asyncio loop thread), its
+        done-callback enqueues a ``_Continuation`` on this harness's
+        command queue. The owner thread will then process the continuation,
+        propagating the result to ``main_future``.
+        """
+        assert self._commands is not None
+        commands = self._commands
+
+        def _enqueue(lf: concurrent.futures.Future[Any]) -> None:
+            try:
+                commands.put(_Continuation(lf, main_future))
+            except Exception:  # pragma: no cover — queue is unbounded
+                _LOG.exception("failed to enqueue _Continuation")
+
+        loop_future.add_done_callback(_enqueue)
+
+    @staticmethod
+    def _handle_continuation(item: _Continuation) -> None:
+        main = item.main_future
+        if main.cancelled() or main.done():
+            return
+        try:
+            main.set_result(item.loop_future.result())
+        except BaseException as exc:
+            with contextlib.suppress(concurrent.futures.InvalidStateError):
+                main.set_exception(exc)
+
+    @staticmethod
+    def _handle_hook_call(item: _HookCall) -> None:
+        try:
+            value = item.fn()
+        except BaseException as exc:
+            if item.completion is not None and not item.completion.done():
+                item.completion.set_exception(exc)
+            else:
+                _LOG.exception("Agent sync hook failed for event %s", item.event_name)
+            return
+        if item.completion is not None and not item.completion.done():
+            item.completion.set_result(value)
 
 
 class _PiAgentHarnessCore:
@@ -393,7 +634,14 @@ class _PiAgentHarnessCore:
         self.owner_thread_id = threading.get_ident()
         self.owner_thread_name = threading.current_thread().name
 
-    def start(self) -> HarnessSnapshot:
+    def start(self) -> concurrent.futures.Future[None]:
+        """Begin starting pi + the bridge; return the loop's completion future.
+
+        F8: the synchronous owner-thread work (constructing objects, writing
+        shim files) happens here; the I/O-bound async work is handed off to
+        the loop via ``runtime.submit_async``. The owner thread is then free
+        to handle hook dispatches that may fire as soon as pi launches.
+        """
         self._check_owner()
         if self.pi is not None:
             raise RuntimeError("PiAgentHarness is already started")
@@ -407,7 +655,6 @@ class _PiAgentHarnessCore:
             initial_open_gates=self.initial_open_gates,
             decision_timeouts_ms=self.decision_timeouts_ms,
         )
-        self.endpoint = cast(BridgeEndpoint, self.runtime.run_async(self.server.start()))
 
         root = self._artifact_root()
         shim_path = self.shim_path or root / "python_tools_extension.ts"
@@ -417,7 +664,6 @@ class _PiAgentHarnessCore:
         provider = self.config.provider
         model = self.config.model
         env = dict(self.config.env or {})
-        env.update(self.endpoint.env())
         env.setdefault("PI_SKIP_VERSION_CHECK", "1")
         env.setdefault("PI_OFFLINE", "1")
         env.setdefault("PI_PY_DIAGNOSTIC_COMMANDS", "1" if self.diagnostic_commands else "0")
@@ -439,43 +685,79 @@ class _PiAgentHarnessCore:
             model = model or self.fake_model_id
             env.setdefault("PYHARNESS_FAUX_API_KEY", "test")
 
-        config = replace(self.config, env=env, provider=provider, model=model)
         self._extension_paths = extension_paths
-        self.pi = PiRpcClient(config)
-        self.runtime.run_async(
-            self.pi.start(extension_paths=extension_paths),
-            timeout=max(10.0, config.startup_timeout + 5.0),
-        )
-        return self.snapshot()
+        startup_timeout = max(10.0, self.config.startup_timeout + 5.0)
+        server = self.server
 
-    def close(self) -> None:
+        async def _start_io() -> None:
+            assert server is not None
+            endpoint = await server.start()
+            # F8: self.endpoint is read by snapshot() from the owner thread.
+            # During start, no concurrent reads happen (no caller has
+            # observed the harness as started yet). Single write, then the
+            # awaited pi.start completes before the public start() future
+            # resolves — at which point snapshot() callers see the
+            # fully-initialized state.
+            self.endpoint = endpoint
+            env_with_endpoint = dict(env)
+            env_with_endpoint.update(endpoint.env())
+            config = replace(
+                self.config, env=env_with_endpoint, provider=provider, model=model
+            )
+            pi = PiRpcClient(config)
+            self.pi = pi
+            await asyncio.wait_for(
+                pi.start(extension_paths=extension_paths), timeout=startup_timeout
+            )
+
+        return self.runtime.submit_async(_start_io())
+
+    def close(self) -> concurrent.futures.Future[None]:
+        """Shut down pi + the bridge; return the loop's completion future."""
         self._check_owner()
         pi = self.pi
         server = self.server
+        tempdir = self._tempdir
         self.pi = None
         self.server = None
-        if pi is not None:
-            self.runtime.run_async(pi.close(), timeout=10.0)
-        if server is not None:
-            self.runtime.run_async(server.close(), timeout=10.0)
-        if self._tempdir is not None and not self.keep_temp:
-            self._tempdir.cleanup()
         self._tempdir = None
         self.endpoint = None
         self._extension_paths = []
 
+        async def _close_io() -> None:
+            if pi is not None:
+                await asyncio.wait_for(pi.close(), timeout=10.0)
+            if server is not None:
+                await asyncio.wait_for(server.close(), timeout=10.0)
+            if tempdir is not None and not self.keep_temp:
+                tempdir.cleanup()
+
+        return self.runtime.submit_async(_close_io())
+
     def call_rpc(
         self, method_name: str, *args: Any, wait_timeout: float | None = None, **kwargs: Any
-    ) -> Any:
+    ) -> concurrent.futures.Future[Any]:
+        """Submit an RPC to pi; return the loop's completion future.
+
+        F8: returning a Future (not blocking on .result()) frees the owner
+        thread to process sync hook dispatches that may fire during the RPC.
+        """
         self._check_owner()
         if self.pi is None:
             raise RuntimeError("PiAgentHarness is not started")
         method = getattr(self.pi, method_name)
-        return self.runtime.run_async(method(*args, **kwargs), timeout=wait_timeout)
+        inner: Awaitable[Any] = method(*args, **kwargs)
+
+        async def _runner() -> Any:
+            if wait_timeout is not None:
+                return await asyncio.wait_for(inner, timeout=wait_timeout)
+            return await inner
+
+        return self.runtime.submit_async(_runner())
 
     def subscribe_client_events(
         self, handler: Callable[[dict[str, Any]], Any]
-    ) -> Callable[[], None]:
+    ) -> concurrent.futures.Future[Callable[[], None]]:
         self._check_owner()
         if self.pi is None:
             raise RuntimeError("PiAgentHarness is not started")
@@ -484,15 +766,23 @@ class _PiAgentHarnessCore:
             assert self.pi is not None
             return self.pi.on_event(handler)
 
-        return cast(Callable[[], None], self.runtime.run_async(install(), timeout=5.0))
+        async def _timed() -> Callable[[], None]:
+            return await asyncio.wait_for(install(), timeout=5.0)
 
-    def unsubscribe_client_events(self, unsubscribe: Callable[[], None]) -> None:
+        return self.runtime.submit_async(_timed())
+
+    def unsubscribe_client_events(
+        self, unsubscribe: Callable[[], None]
+    ) -> concurrent.futures.Future[None]:
         self._check_owner()
 
         async def uninstall() -> None:
             unsubscribe()
 
-        self.runtime.run_async(uninstall(), timeout=5.0)
+        async def _timed() -> None:
+            await asyncio.wait_for(uninstall(), timeout=5.0)
+
+        return self.runtime.submit_async(_timed())
 
     def snapshot(self) -> HarnessSnapshot:
         self._check_owner()

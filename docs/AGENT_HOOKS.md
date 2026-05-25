@@ -30,7 +30,9 @@ MainThread
   └─ application code; calls Agent.start(), prompt(), close(), etc.
 
 PiAgentHarness-<id>
-  └─ owner-thread-only harness state
+  ├─ owner-thread-only harness state
+  ├─ on_* notification hooks
+  └─ decide_* decision hooks
 
 PiAsyncioLoop-Thread-2
   ├─ Pi RPC stdout/stdin I/O
@@ -38,25 +40,36 @@ PiAsyncioLoop-Thread-2
   ├─ async_on_* notification hooks
   └─ async_decide_* decision hooks
 
-pi-hook_0
-  ├─ on_* notification hooks
-  └─ decide_* decision hooks
-
 pi-tool_*
   └─ Python tools across all harnesses
 ```
 
-Synchronous hooks run on `HarnessRuntime.hook_executor`, a dedicated
-`ThreadPoolExecutor(max_workers=1)`. It is separate from the shared tool executor, so a slow tool
-cannot starve event delivery. The single hook worker plus awaited dispatch preserves per-runtime hook
-ordering without an additional event queue.
+Sync hooks (`on_*`, `decide_*`) run on the **owner thread**, routed via the harness's command queue
+as `_HookCall` messages. They are naturally serialized FIFO with the harness's other operations (the
+queue has a single consumer). There is no separate `hook_executor` — the previous
+`HarnessRuntime.hook_executor` was eliminated as part of the F8 fix (2026-05-24) so that sync hooks
+have natural thread affinity with the harness state they tend to read.
+
+**`threaded=False` mode (Level 3 Option A, landed 2026-05-25):** MainThread *is* the queue consumer.
+Harness public methods (`harness.prompt_and_wait()` / `harness.start()` / etc.) pump the queue inside
+`_call` while waiting for the operation's result; sync hooks dispatched from the loop are picked up
+by MainThread between continuations. There is one dispatch code path; the consumer is either the
+dedicated owner thread (`threaded=True`) or MainThread (`threaded=False`). For tests that inject
+events directly via `runtime.run_async`, use `agent.pump_until(coro_or_future_or_event)` — the
+explicit pump helper handles the bypass-the-public-API case.
+
+**Limitation — blocking sync hooks under `threaded=False`:** if a sync hook blocks (busy-wait,
+`time.sleep`, blocking I/O), MainThread is stuck inside that hook for the duration and can't do
+test-driver work concurrently (e.g. close a socket to trigger cancellation). Tests that need such
+patterns should use `threaded=True` so a dedicated owner thread runs the hook while MainThread does
+the driver work.
 
 ## Notification hooks
 
 Notification hooks use the parallel two-method pattern:
 
 - `async_on_<event>` runs on the runtime asyncio loop thread.
-- `on_<event>` runs on the dedicated hook executor.
+- `on_<event>` runs on the owner thread (or MainThread pump under `threaded=False`).
 
 A subclass may define at most one notification color per event. If a subclass inherits one color and
 wants to switch to the other, clear the inherited attribute explicitly:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import socket
 import threading
@@ -16,6 +17,7 @@ from libharness.pi.server import BridgeEndpoint, PythonToolServer
 
 
 def _event_request(
+    agent: Agent,
     endpoint: BridgeEndpoint,
     event_name: str,
     data: Mapping[str, Any] | None = None,
@@ -23,24 +25,46 @@ def _event_request(
     request_id: str = "event-1",
     expect_response: bool = True,
 ) -> dict[str, Any] | None:
-    with socket.create_connection((endpoint.host, endpoint.port), timeout=2.0) as sock:
-        sock.sendall(
-            dumps_line(
-                {
-                    "id": request_id,
-                    "type": "event",
-                    "token": endpoint.token,
-                    "event": event_name,
-                    "data": {"type": event_name, **dict(data or {})},
-                }
-            )
-        )
-        if not expect_response:
-            return None
-        file = sock.makefile("rb")
-        line = file.readline()
-        assert line
-        return json.loads(line.decode("utf-8"))
+    """Send a bridge event request; pump the harness queue while waiting.
+
+    F8/Level-3-Option-A: the socket I/O happens on a worker thread so
+    MainThread is free to consume `_HookCall` messages from the harness
+    command queue (via `agent.pump_until`). Without this, sync hooks
+    fired by the bridge during the request would deadlock — MainThread
+    blocked on `sock.recv`, no queue consumer.
+    """
+    response_future: concurrent.futures.Future[dict[str, Any] | None] = (
+        concurrent.futures.Future()
+    )
+
+    def _worker() -> None:
+        try:
+            with socket.create_connection(
+                (endpoint.host, endpoint.port), timeout=2.0
+            ) as sock:
+                sock.sendall(
+                    dumps_line(
+                        {
+                            "id": request_id,
+                            "type": "event",
+                            "token": endpoint.token,
+                            "event": event_name,
+                            "data": {"type": event_name, **dict(data or {})},
+                        }
+                    )
+                )
+                if not expect_response:
+                    response_future.set_result(None)
+                    return
+                file = sock.makefile("rb")
+                line = file.readline()
+                assert line
+                response_future.set_result(json.loads(line.decode("utf-8")))
+        except BaseException as exc:
+            response_future.set_exception(exc)
+
+    threading.Thread(target=_worker, name="event-request-worker", daemon=True).start()
+    return agent.pump_until(response_future)
 
 
 def _notify_request(
@@ -73,11 +97,12 @@ def _start_bridge(runtime: HarnessRuntime, agent: Agent) -> tuple[PythonToolServ
     return server, endpoint
 
 
-def test_sync_decision_hook_runs_on_hook_executor_and_returns_result() -> None:
-    runtime = HarnessRuntime(
-        loop_thread_name="PiAsyncioLoop-decision-sync",
-        hook_thread_name_prefix="decision-hook-sync",
-    )
+def test_sync_decision_hook_runs_on_owner_thread_and_returns_result() -> None:
+    """F8 (post-Level-2): sync decision hooks run on the owner thread,
+    routed through `_HookCall` on the harness command queue. The hook's
+    return value is propagated back to the bridge dispatch via the
+    completion future."""
+    runtime = HarnessRuntime(loop_thread_name="PiAsyncioLoop-decision-sync")
     seen: list[tuple[str, str, bool]] = []
 
     class GateAgent(Agent):
@@ -85,15 +110,20 @@ def test_sync_decision_hook_runs_on_hook_executor_and_returns_result() -> None:
             seen.append((threading.current_thread().name, event.type, ctx.cancelled))
             return {"block": True, "reason": "blocked by Python"}
 
-    agent = GateAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
+    agent = GateAgent(
+        ToolRegistry(),
+        config=fake_config(),
+        runtime=runtime,
+        owner_thread_name="PiAgentHarness-decision-sync",
+    )
     server, endpoint = _start_bridge(runtime, agent)
     try:
-        response = _event_request(endpoint, "tool_call", {"toolName": "bash"})
+        response = _event_request(agent, endpoint, "tool_call", {"toolName": "bash"})
         assert response is not None
         assert response["success"] is True
         assert response["data"] == {"block": True, "reason": "blocked by Python"}
         assert seen == [(seen[0][0], "tool_call", False)]
-        assert seen[0][0].startswith("decision-hook-sync")
+        assert seen[0][0] == "PiAgentHarness-decision-sync"
     finally:
         runtime.run_async(server.close())
         agent.close()
@@ -117,6 +147,7 @@ def test_async_decision_hook_runs_on_runtime_loop_and_provider_payload_shape() -
     server, endpoint = _start_bridge(runtime, agent)
     try:
         response = _event_request(
+            agent,
             endpoint,
             "before_provider_request",
             {"payload": {"messages": [], "temperature": 1}},
@@ -146,7 +177,7 @@ def test_session_before_decision_return_shape() -> None:
     agent = SessionAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     server, endpoint = _start_bridge(runtime, agent)
     try:
-        response = _event_request(endpoint, "session_before_switch", {"reason": "new"})
+        response = _event_request(agent, endpoint, "session_before_switch", {"reason": "new"})
         assert response is not None
         assert response["success"] is True
         assert response["data"] == {"cancel": True}
@@ -168,7 +199,7 @@ def test_decision_hook_exception_is_logged_and_bridge_call_fails_open(
     agent = ErrorAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
     server, endpoint = _start_bridge(runtime, agent)
     try:
-        response = _event_request(endpoint, "tool_call", {"toolName": "bash"})
+        response = _event_request(agent, endpoint, "tool_call", {"toolName": "bash"})
         assert response is not None
         assert response["success"] is False
         assert "boom for tool_call" in response["error"]
@@ -211,10 +242,7 @@ def test_decision_timeout_opt_in_is_advertised_in_manifest() -> None:
 
 
 def test_cancellation_mid_decision_when_bridge_connection_closes() -> None:
-    runtime = HarnessRuntime(
-        loop_thread_name="PiAsyncioLoop-decision-cancel",
-        hook_thread_name_prefix="decision-cancel-hook",
-    )
+    runtime = HarnessRuntime(loop_thread_name="PiAsyncioLoop-decision-cancel")
     exited = threading.Event()
 
     class CancellableAgent(Agent):
@@ -242,7 +270,11 @@ def test_cancellation_mid_decision_when_bridge_connection_closes() -> None:
                     }
                 )
             )
-        assert exited.wait(2.0)
+        # Pump the harness queue while waiting for the hook (running on
+        # the owner thread / MainThread pump) to detect cancellation
+        # and set `exited`. Without pumping, the _HookCall would sit
+        # forever and ctx.cancelled would never propagate.
+        assert agent.pump_until(exited, timeout=2.0)
     finally:
         runtime.run_async(server.close())
         agent.close()
@@ -263,7 +295,16 @@ def test_bridge_connection_drop_mid_decision_does_not_deadlock() -> None:
             exited.set()
             return None
 
-    agent = DropAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
+    # threaded=True so the sync hook's busy-wait runs on the owner thread,
+    # leaving MainThread free to close the socket while the hook polls
+    # ctx.cancelled. In threaded=False, MainThread *is* the hook runner —
+    # a blocking hook would starve MainThread of the chance to close().
+    agent = DropAgent(
+        ToolRegistry(),
+        config=fake_config(),
+        runtime=runtime,
+        owner_thread_name="PiAgentHarness-drop",
+    )
     server, endpoint = _start_bridge(runtime, agent)
     try:
         sock = socket.create_connection((endpoint.host, endpoint.port), timeout=2.0)
@@ -288,11 +329,11 @@ def test_bridge_connection_drop_mid_decision_does_not_deadlock() -> None:
         runtime.close()
 
 
-def test_concurrent_decision_events_are_serialized_by_hook_executor() -> None:
-    runtime = HarnessRuntime(
-        loop_thread_name="PiAsyncioLoop-decision-concurrent",
-        hook_thread_name_prefix="decision-serial-hook",
-    )
+def test_concurrent_decision_events_are_serialized_by_owner_thread() -> None:
+    """F8 (post-Level-2): concurrent sync decision events fire FIFO via
+    the owner thread's command queue. The single-consumer queue
+    guarantees no two sync hooks run concurrently for the same harness."""
+    runtime = HarnessRuntime(loop_thread_name="PiAsyncioLoop-decision-concurrent")
     active = 0
     max_active = 0
     lock = threading.Lock()
@@ -310,13 +351,18 @@ def test_concurrent_decision_events_are_serialized_by_hook_executor() -> None:
                 active -= 1
             return {"index": int(event["index"])}
 
-    agent = SerialAgent(ToolRegistry(), config=fake_config(), runtime=runtime, threaded=False)
+    agent = SerialAgent(
+        ToolRegistry(),
+        config=fake_config(),
+        runtime=runtime,
+        owner_thread_name="PiAgentHarness-decision-concurrent",
+    )
     server, endpoint = _start_bridge(runtime, agent)
     responses: list[dict[str, Any] | None] = []
 
     def send(index: int) -> None:
         responses.append(
-            _event_request(endpoint, "tool_call", {"index": index}, request_id=str(index))
+            _event_request(agent, endpoint, "tool_call", {"index": index}, request_id=str(index))
         )
 
     try:
@@ -356,7 +402,7 @@ def test_notification_and_decision_for_same_bridge_event_run_in_order() -> None:
     )
     server, endpoint = _start_bridge(runtime, agent)
     try:
-        response = _event_request(endpoint, "tool_call", {"toolName": "bash"})
+        response = _event_request(agent, endpoint, "tool_call", {"toolName": "bash"})
         assert response is not None
         assert response["success"] is True
         assert order == [("observe", "tool_call"), ("decide", "tool_call")]
@@ -380,7 +426,7 @@ def test_notify_event_fire_and_forget_reaches_observation_hook() -> None:
     server, endpoint = _start_bridge(runtime, agent)
     try:
         _notify_request(endpoint, "tool_call", {"toolName": "bash"})
-        assert observed.wait(2.0)
+        assert agent.pump_until(observed, timeout=2.0)
     finally:
         runtime.run_async(server.close())
         agent.close()

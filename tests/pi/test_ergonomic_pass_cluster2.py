@@ -161,7 +161,7 @@ def test_sync_notification_hook_returning_awaitable_logged() -> None:
         logger.addHandler(handler)
         logger.setLevel(_logging.ERROR)
         try:
-            runtime.run_async(agent._async_on_event({"type": "agent_start"}))
+            agent.pump_until(agent._async_on_event({"type": "agent_start"}))
         finally:
             logger.removeHandler(handler)
             logger.setLevel(old_level)

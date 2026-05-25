@@ -127,7 +127,7 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 
 | ID  | Sev  | Title                                                                  | Rec   |
 | --- | ---- | ---------------------------------------------------------------------- | ----- |
-| F8  | HIGH | Shared `hook_executor` max_workers=1 serializes HITL across harnesses  | Fix   |
+| F8  | HIGH | Shared `hook_executor` max_workers=1 serializes HITL across harnesses  | Done  |
 | F9  | HIGH | `_call`/`submit` race with `close()` — queued commands hang            | Done  |
 | F10 | MOD  | Keyword-only `ctx` dispatched positionally (= Item D)                  | Done  |
 | F11 | MOD  | `_decision_timeouts_ms` mutable class-default footgun                  | Done  |
@@ -158,6 +158,7 @@ This category is detailed in `dev-notes/2026-05-17-v8-port-review-synthesis.md` 
 
 **Detail (Tier-2 items I recommend keeping deferred):**
 
+- *F8 — Done (2026-05-24).* Resolved by folding sync-hook dispatch into the owner thread, **not** by changing executor sharing scope. `hook_executor` removed from `HarnessRuntime` entirely. Sync hooks now enqueue `_HookCall` messages on the harness command queue; the owner thread (`PiAgentHarness-<id>`) consumes them naturally serialized FIFO with the harness's other operations. Operations that touch the loop (`call_rpc`, `start`, `close`, `(un)subscribe_client_events`) return `concurrent.futures.Future`; the owner-thread dispatcher registers a `_Continuation` callback and stays free to handle hook calls during long-running RPCs. Cross-harness HITL serialization is structurally impossible — each harness has its own queue and its own consumer. Regression: existing `test_threaded_agent.py` + the rewritten `test_sync_hook_fires_on_owner_thread_not_loop` and `test_concurrent_decision_events_are_serialized_by_owner_thread` pin the new invariants. **Follow-up gap:** `threaded=False` mode still uses `asyncio`'s default executor for sync hooks (MainThread blocked on `Future.result()` can't pump the queue). Tracked as a new entry in § C and in `dev-notes/2026-05-24-level-3-runtime-audit.md`.
 - *F17 — Done.* The synthesis doc was written against the pre-Phase-6 state (13 tests). After Phase 6, `tests/pi/test_agent_class.py` has 16 tests against Agent (including 3 strict-mode E2E tests for decision events from Item C), and `test_decision_hooks.py` / `test_channel_separation.py` exercise the surface further. The 56-test suite resolves the bulk of this finding. Any remaining gaps are absorbed by the future tests for the other fixes.
 - *F20 — Done.* Already folded into commit `4d0bee1` (Tier-1 fixes) per the synthesizer's note. Listed in the table for completeness; no action needed.
 - *F21 — Remain deferred (risk now documented in docstring).* Subclassing `AgentHookSurface` directly (without going through `Agent`) is not a documented or supported user pattern. Adding the `__init_subclass__` validation to `AgentHookSurface` changes the invariant about who validates whose surface and could surprise the (currently zero) users who subclass the mixin to compose differently. Defer until a real use case materializes. As of ergonomic-pass batch 1: the `AgentHookSurface` class docstring now explicitly documents the risk and points at this entry, so a future direct-subclasser sees the warning before they trip the gap.
@@ -280,15 +281,31 @@ The *feature* is supported; only the *test* is missing. Not a real deferral. Fol
 
 | Recommendation                        | Count |
 | ------------------------------------- | ----- |
-| **Fix now** — need the council        | 2     |
+| **Fix now** — need the council        | 1     |
 | **Remain deferred** — strong position | 10    |
-| **Done**                              | 26    |
+| **Done**                              | 28    |
 
 **Detail (which items go in each bucket):**
 
-- *Fix now (2, need the 4-LLM council for design call):* F8 (shared hook_executor design — per-Agent vs bump-workers), F14 (reader-task death — conservative-fail-pending vs aggressive-kill-pi).
+- *Fix now (1, needs the 4-LLM council for design call):* F14 (reader-task death — conservative-fail-pending vs aggressive-kill-pi).
 - *Remain deferred (10):* A.4 (wire-frame names), A.5 (`_decision_timeout_ms` default), A.6 (runtime opt-in), F21 (subclass validation bypass — risk now documented in `AgentHookSurface` docstring), F30 (cleanup-order test), F31 (subclass-side consistency check), C.1 (Item E thread-bounce), D.1 (TypedDicts), D.3 (`PiPythonHarness` deprecation), F.1 / F.2 / F.3 (roadmap bridges — count as one entry; same family).
-- *Done (26):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 commit `13dd691` — A.2 / F27, F19, F24, F33, F34, F36; batch 4a (this commit) — F9, F13, F15, F16.
+- *Done (28):* F17 (Agent test coverage — Phase 6), F20 (folded into commit `4d0bee1`); batch 1 commit `02cc67a` — A.1 / F26, F28, F29, F32, F35, D.2, E.1; batch 2 commit `d90d626` — A.3 / F10, F11, F12, F22, F23, F25; batch 3 commit `13dd691` — A.2 / F27, F19, F24, F33, F34, F36; batch 4a — F9, F13, F15, F16; **F8 (2026-05-24) — fold-hooks-into-owner-thread; see § B detail above**; **C.3 (2026-05-25) — MainThread-as-pump in threaded=False; see § C detail above**.
+
+### C.3: `threaded=False` design debt — MainThread is now the queue consumer (DONE 2026-05-25)
+
+**Surfaced by:** F8 implementation. The fold-hooks-into-owner-thread design relies on a thread consuming the command queue. In `threaded=True` that's the dedicated owner thread (`PiAgentHarness-<id>`). In `threaded=False` it should be MainThread — MainThread is conceptually the owner thread when no separate thread is spun up.
+
+**Current behavior:** MainThread is blocked on `concurrent.futures.Future.result()` while a harness operation is in flight. It does not pump the command queue. So `_dispatch_sync_hook` falls back to `loop.run_in_executor(None, fn)` — asyncio's default executor — which (a) is a different code path from `threaded=True`, (b) has multiple workers so no FIFO guarantee across concurrent hooks, (c) doesn't share thread affinity with the harness state.
+
+**Design invariant we want:** *one* code path for sync hook dispatch. The dispatcher consumer differs only in *who* — dedicated owner thread (`threaded=True`) or MainThread (`threaded=False`). No `if self.threaded:` branch in `_dispatch_sync_hook`.
+
+**What blocks the clean fix:**
+
+1. Harness public methods (`harness.prompt_and_wait`, etc.) would need to enter a pump loop when `threaded=False` — block on the command queue, dispatching `_HookCall` / `_Continuation` until our own operation's `main_future` resolves. Doable.
+1. White-box tests bypass the harness API (`runtime.run_async(agent._async_on_event(...))`, raw bridge-socket via `_event_request`). In these patterns MainThread is blocked on something that isn't pump-aware (raw `Future.result()` or `socket.recv()`). Would deadlock if hooks tried to dispatch to MainThread. Restructuring these tests to use harness API is meaningful work.
+1. Or: deprecate `threaded=False` entirely — force all tests onto `threaded=True`. Cleanest end state; biggest refactor.
+
+**Status: DONE (Level 3 Option A, 2026-05-25).** `_call` pumps the harness command queue while waiting for its operation in `threaded=False`; `pump_until(target)` lets tests that bypass the harness public API pump explicitly (target can be a coroutine, a `concurrent.futures.Future`, or a `threading.Event`). The `if self.threaded:` branch in `_dispatch_sync_hook` is removed — single dispatch code path; consumer is either the dedicated owner thread (`threaded=True`) or MainThread (`threaded=False`). Test churn was contained to a centralized `_event_request` refactor + a small batch of `runtime.run_async → agent.pump_until` call-site swaps. Known limitation documented in `docs/AGENT_HOOKS.md`: blocking sync hooks under `threaded=False` block MainThread; tests that need cancellation-during-blocking-hook should use `threaded=True`.
 
 26 fix-now items + the carrying of A.5 (HITL no-default-timeout, already resolved) and A.4 (cosmetic wire-frame names). The fix-now set clusters cleanly into:
 

@@ -157,7 +157,7 @@ async def test_decision_hook_exception_logged_once(caplog: pytest.LogCaptureFixt
                 ctx = HookContext("tool_call", request_id="req-1", _cancelled=cancelled)
                 event = AgentEvent.from_mapping({"type": "tool_call"})
                 with pytest.raises(RuntimeError, match="synthetic decision-hook failure"):
-                    runtime.run_async(agent._dispatch_decision_hook(event, ctx))
+                    agent.pump_until(agent._dispatch_decision_hook(event, ctx))
 
         # Count log entries mentioning the synthetic failure.
         matched = [
