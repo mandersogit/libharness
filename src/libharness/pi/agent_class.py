@@ -206,10 +206,28 @@ class Agent(AgentHookSurface, PiAgentHarness):
         processes it — the dedicated owner thread (``threaded=True``) or
         MainThread pumping via ``_call`` / ``pump_until``
         (``threaded=False``). One code path; consumer varies with mode.
+
+        C1: close-coordinate the enqueue. ``close()`` puts ``_STOP``
+        under ``_close_lock``; enqueueing a ``_HookCall`` after
+        ``_STOP`` would strand the loop coroutine awaiting
+        ``wrap_future(completion)`` forever. Take ``_close_lock``; if
+        the harness is closed, complete the future with an exception
+        so the awaiting coroutine unblocks.
         """
         loop = asyncio.get_running_loop()
         completion: concurrent.futures.Future[Any] = concurrent.futures.Future()
-        self._commands.put(_HookCall(fn=fn, event_name=event_name, completion=completion))
+        with self._close_lock:
+            if self._closed:
+                completion.set_exception(
+                    RuntimeError(
+                        f"PiAgentHarness is closed; sync hook for "
+                        f"event {event_name!r} cannot dispatch"
+                    )
+                )
+            else:
+                self._commands.put(
+                    _HookCall(fn=fn, event_name=event_name, completion=completion)
+                )
         return await asyncio.wrap_future(completion, loop=loop)
 
     def _install_agent_event_dispatcher(self) -> None:

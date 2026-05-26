@@ -341,6 +341,20 @@ class PiAgentHarness:
             except BaseException as exc:
                 future.set_exception(exc)
             return future
+        # C2: detect re-entry from a sync hook running on the owner thread.
+        # The owner thread is the queue's only consumer; if it's currently
+        # mid-hook and the hook calls a public API method that goes through
+        # `submit`, the queued operation would wait for the owner thread to
+        # finish the hook — which is waiting for the operation. Deadlock.
+        # Raise loudly with an actionable message instead.
+        owner_thread = self._owner_thread
+        if owner_thread is not None and threading.get_ident() == owner_thread.ident:
+            raise RuntimeError(
+                "PiAgentHarness public API called from the harness's own owner "
+                "thread (usually a sync `on_*` / `decide_*` hook). This would "
+                "deadlock the owner-thread queue. Use an `async_*` hook instead, "
+                "or perform the API call from a separate thread."
+            )
         # F9: ensure start_owner_thread runs before we take the close lock —
         # start_owner_thread takes its own lock and we don't want to nest.
         self.start_owner_thread()
@@ -548,15 +562,38 @@ class PiAgentHarness:
         done-callback enqueues a ``_Continuation`` on this harness's
         command queue. The owner thread will then process the continuation,
         propagating the result to ``main_future``.
+
+        C1: close-coordinate the enqueue. If ``close()`` already set
+        ``_closed`` and put ``_STOP``, enqueueing a ``_Continuation``
+        behind ``_STOP`` would strand the caller's ``main_future``
+        forever (owner thread exits on ``_STOP`` without draining).
+        Take ``_close_lock``; if closed, complete ``main_future`` with
+        an exception so the awaiting ``_call`` / ``submit().result()``
+        unblocks immediately.
         """
-        assert self._commands is not None
         commands = self._commands
+        close_lock = self._close_lock
+        closed_flag = self  # captured for closure; read .self._closed lazily
 
         def _enqueue(lf: concurrent.futures.Future[Any]) -> None:
-            try:
-                commands.put(_Continuation(lf, main_future))
-            except Exception:  # pragma: no cover — queue is unbounded
-                _LOG.exception("failed to enqueue _Continuation")
+            with close_lock:
+                if closed_flag._closed:
+                    with contextlib.suppress(concurrent.futures.InvalidStateError):
+                        main_future.set_exception(
+                            RuntimeError(
+                                "PiAgentHarness is closed; "
+                                "continuation cannot be delivered"
+                            )
+                        )
+                    return
+                try:
+                    commands.put(_Continuation(lf, main_future))
+                except Exception:  # pragma: no cover — queue is unbounded
+                    _LOG.exception("failed to enqueue _Continuation")
+                    with contextlib.suppress(concurrent.futures.InvalidStateError):
+                        main_future.set_exception(
+                            RuntimeError("failed to enqueue _Continuation")
+                        )
 
         loop_future.add_done_callback(_enqueue)
 

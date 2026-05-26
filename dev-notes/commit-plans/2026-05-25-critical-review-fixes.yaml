@@ -1,0 +1,191 @@
+repo: .
+
+commits:
+  - message: |
+      fix(pi): C1/C2/C3 — adversarial-review CRITICAL findings
+
+      Three CRITICAL bugs surfaced by a 9-review adversarial sweep on
+      2026-05-25 (2 Opus generalist + 6 codex-cli specialized at xhigh
+      effort + 1 codex-cli medium-effort validation; see
+      dev-notes/2026-05-25-adversarial-review-synthesis.md for the
+      full deduplicated findings table).
+
+      ## C1 — `close()` strands pending `_HookCall` / `_Continuation` items
+
+      3-reviewer consensus (opus-gen-1, codex-gen-1-v2, codex-gen-2-v2).
+
+      Before this fix, `close()` would acquire `_close_lock`, set
+      `_closed=True`, and put `_STOP` on the command queue. Two other
+      producers — `_register_continuation` (loop-thread done-callback)
+      and `_dispatch_sync_hook` (loop-thread sync hook dispatch) — put
+      items WITHOUT taking the lock. If `close()` wins the race, those
+      items land behind `_STOP`; the owner thread exits on `_STOP`
+      without draining; the awaiting coroutine on the loop is wedged
+      on `asyncio.wrap_future(completion)` permanently (until
+      `runtime.close()` cancels it — which can be much later).
+
+      Fix: both producers now take `_close_lock`. If `_closed` is set,
+      they complete the awaiting future with `RuntimeError` instead of
+      enqueueing — so callers unblock immediately rather than strand.
+
+      Tests:
+      - `test_c1_dispatch_sync_hook_after_close_completes_with_exception`
+      - `test_c1_register_continuation_after_close_completes_main_future`
+      - `test_c1_main_future_unblocks_when_continuation_arrives_after_stop`
+
+      ## C2 — Sync hook on owner thread can't call public harness API
+
+      2-reviewer consensus (codex-gen-1-v2, codex-gen-2-v2).
+
+      Post-F8, sync hooks run on the owner thread. A sync `on_*` /
+      `decide_*` hook that calls any public harness method
+      (`self.snapshot()`, `self.send(...)`, etc.) enqueues work onto
+      the same single-consumer queue and then blocks waiting for the
+      owner thread to consume it — but the owner thread IS the hook.
+      Deadlock. Specific to `threaded=True`; in `threaded=False` the
+      pump is re-entrant and works (correctly preserved).
+
+      Fix: `submit()` detects re-entry via
+      `threading.get_ident() == self._owner_thread.ident` and raises
+      `RuntimeError` with an actionable message ("use `async_*` hook
+      or call from another thread") instead of deadlocking.
+
+      Tests:
+      - `test_c2_sync_hook_calling_snapshot_raises_clear_error`
+      - `test_c2_threaded_false_allows_reentry`
+
+      ## C3 — Universal wheel ships host-specific pi binary
+
+      Single-reviewer finding (codex-vendoring-v2); load-bearing for
+      PyPI distribution.
+
+      Before this fix, `python -m build` would produce
+      `libharness-X.Y.Z-py3-none-any.whl` containing the build host's
+      platform-specific pi executable. Published to PyPI, this wheel
+      installs on every platform but the binary inside only works on
+      one — Windows users get "no pi.exe found", wrong-arch Unix users
+      hit "Exec format error".
+
+      Fix: new `BdistWheelWithPiTag` cmdclass in `setup.py` overrides
+      `bdist_wheel.finalize_options` and `get_tag`. Tag selection is
+      driven by `_vendored_binary_present()` (checks
+      `src/libharness/_vendor/pi/pi(.exe)` on disk), NOT just the
+      `LIBHARNESS_SKIP_PI_VENDOR` env var — a stale binary from a
+      prior local build must still produce a correctly-tagged wheel.
+
+      Result:
+      - Binary present → wheel filename ends in platform tag
+        (e.g. `py3-none-linux_aarch64.whl`). Pip refuses to install on
+        wrong platforms and falls through to sdist (which re-runs the
+        vendor step for the user's own platform).
+      - Binary absent (SKIP=1 + clean dir) → wheel stays `py3-none-any`,
+        which is the correct tag for a genuinely pure-Python wheel.
+
+      `py3` / `none` for impl/abi is intentional: pi's binary is
+      architecturally independent of Python implementation and ABI;
+      only OS+arch matters.
+
+      Tests:
+      - `test_c3_wheel_with_bundled_binary_has_platform_tag` (skipped
+        if vendored binary not present)
+      - `test_c3_wheel_without_binary_has_universal_tag` (creates a
+        clean copy of the project minus `_vendor/`)
+      - Both skipped in 3.14t (FT venv lacks `build` package).
+
+      ## Files
+
+      ### src/libharness/pi/agent.py
+
+      C1: `_register_continuation` now takes `_close_lock` in its
+      done-callback. If closed, sets `main_future.set_exception(
+      RuntimeError("PiAgentHarness is closed; continuation cannot be
+      delivered"))` and skips the enqueue. Same belt-and-braces
+      handling for the pragma-no-cover `commands.put` failure path
+      (was a silent strand; now completes main_future with an
+      exception).
+
+      C2: `submit()` now checks `threading.get_ident() ==
+      self._owner_thread.ident` before the `start_owner_thread()`
+      call. If true, raises `RuntimeError` immediately. The
+      check is only relevant in `threaded=True` mode (the
+      `not self.threaded` fast path is unchanged).
+
+      ### src/libharness/pi/agent_class.py
+
+      C1: `_dispatch_sync_hook` now takes `self._close_lock` around
+      the `_HookCall` enqueue. If closed, sets
+      `completion.set_exception(RuntimeError("PiAgentHarness is
+      closed; sync hook for event ... cannot dispatch"))` and skips
+      the enqueue. The awaiting coroutine on the loop unblocks via
+      the wrap_future propagation.
+
+      ### setup.py
+
+      C3: New `BdistWheelWithPiTag(_bdist_wheel)` cmdclass +
+      registration in the cmdclass dict. Decision logic centralized
+      in module-level `_vendored_binary_present()` helper.
+
+      ### tests/pi/test_critical_review_fixes.py (new, 7 cases)
+
+      One file per fix-cluster; each test docstring cites the
+      specific synthesis section + the bug it pins.
+
+      ### dev-notes/2026-05-25-adversarial-review-synthesis.md (new)
+
+      The consolidated finding-set: 3 CRITICAL + 17 MODERATE + ~16
+      MINOR across 9 reviews. The "Update (2026-05-25)" header
+      records the CRITICAL fixes that landed in this commit.
+      Status: `Triaged — C1, C2, C3 fixed 2026-05-25; MODERATE
+      backlog pending`.
+
+      ### dev-notes/2026-05-25-codex-cli-json-streaming.md (new)
+
+      Captures the codex-cli `--json` event-streaming discovery from
+      this session: three programmatic surfaces (`exec --json` /
+      `mcp-server` / `app-server`); event types observed
+      (`thread.started`, `turn.started/completed`, `item.started/
+      completed` with sub-types `command_execution`, `agent_message`);
+      caveats (line-1 cosmetic stderr noise, `2>/dev/null` + jq
+      footgun, `< /dev/null` for non-interactive runs); recommended
+      invocation pattern with parser snippets; future-build "Level 2"
+      sketch for a `codex mcp-server`-driven harness analogous to
+      `libharness.pi.PiRpcClient`. Status: `Draft (for review)`.
+
+      ### dev-notes/SESSION-STATE.md
+
+      New top-of-current-state bullet covering the C1/C2/C3 fixes.
+      Test counts updated (157 unit + 3 live on 3.11; 155 unit + 3
+      live on 3.14t with the 2 wheel-build tests skipped).
+
+      ## Acceptance
+
+      - `make test` on 3.11: 157 unit tests pass (was 150; +7 new
+        C1/C2/C3 regressions). 3 live tests pass.
+      - `make test` on 3.14t: 155 unit + 2 skipped (build-frontend
+        not installed in FT venv). 3 live tests pass.
+      - `make lint`, `make typecheck` (mypy strict + pyright):
+        0 issues on both venvs.
+      - C3 verified by hand: `python -m build --wheel` produces
+        `libharness-0.0.1-py3-none-linux_aarch64.whl` (with binary)
+        vs `libharness-0.0.1-py3-none-any.whl` (LIBHARNESS_SKIP=1
+        + clean dir). Both correct.
+
+      ## Adversarial-review backlog still pending
+
+      17 MODERATE + ~16 MINOR + 5 design concerns documented in
+      `dev-notes/2026-05-25-adversarial-review-synthesis.md`.
+      Recommended next batches (per the triage section there):
+      M1, M2, M5, M7, M10, M11 (tight localized correctness);
+      then M3, M4, M6, M8, M9 (RPC API + vendoring cleanup);
+      then the M14 single-pass docs cleanup
+      (5+ stale `hook_executor` references across DESIGN.md,
+      AGENT_HOOKS.md, and 2 docstrings).
+    files:
+      - src/libharness/pi/agent.py
+      - src/libharness/pi/agent_class.py
+      - setup.py
+      - tests/pi/test_critical_review_fixes.py
+      - dev-notes/SESSION-STATE.md
+      - dev-notes/2026-05-25-adversarial-review-synthesis.md
+      - dev-notes/2026-05-25-codex-cli-json-streaming.md
+      - dev-notes/commit-plans/2026-05-25-critical-review-fixes.yaml
